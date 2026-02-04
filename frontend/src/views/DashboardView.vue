@@ -74,7 +74,7 @@ const toggleSidebar = () => {
             <span class="crumb-current">{{ currentTabLabel }}</span>
         </div>
         <div class="top-actions">
-           <a href="https://github.com/TheSmallHanCat/sora2api" target="_blank" class="github-link">
+           <a href="https://github.com/shuishen49/sora2pc" target="_blank" class="github-link">
                GitHub
            </a>
         </div>
