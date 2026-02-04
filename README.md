@@ -2,10 +2,12 @@
 
 [![加入QQ群](https://img.shields.io/badge/QQ群-点击加入-blue.svg)](https://qm.qq.com/cgi-bin/qm/qr?k=kSKwz-HRqrddrALgfLqCp7C2-aGZqPlv&jump_from=webapi&authKey=KUwPZ1lgzoIXjwIf/AfQ0UFFhRcUAO8VAdZk2kVdrGHQhxyhlgn30vX1SCX5Lu8d) (群号: 83958598)
 
+## 关于本项目
 
-基于 Wails + Vue 的桌面应用，前端使用 Vite 构建。
+- **前端开源、后端闭源**：本仓库为**商业项目**，仅开放前端与桌面壳相关代码；后端服务为闭源商业产品，**并非免费项目**。
+- **接入方式**：您也可以**接入自己的 API**（自建或兼容接口），在应用内配置服务器地址后即可使用本客户端连接自有后端。
 
-项目配置可编辑根目录下的 `wails.json`，更多说明见：<https://wails.io/docs/reference/project-config>
+基于 Wails + Vue 的桌面应用，前端使用 Vite 构建。项目配置可编辑根目录下的 `wails.json`，更多说明见：<https://wails.io/docs/reference/project-config>
 
 ## 界面预览
 

@@ -27,7 +27,7 @@ mkdir "%OUT_DIR%"
 
 copy /y "%EXE_SRC%" "%OUT_DIR%\sorapc.exe" >nul
 
-if exist "%PROJECT_DIR%config.json" copy /y "%PROJECT_DIR%config.json" "%OUT_DIR%\config.json" >nul
+rem 不复制 config.json，避免把本机敏感配置（如 base_url）带入发布包；用户首次运行后可自行配置
 if exist "%PROJECT_DIR%logs.txt" copy /y "%PROJECT_DIR%logs.txt" "%OUT_DIR%\logs.txt" >nul
 
 (
