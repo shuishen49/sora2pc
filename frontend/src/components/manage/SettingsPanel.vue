@@ -7,6 +7,11 @@ const adminStore = useAdminStore()
 const generateStore = useGenerateStore()
 const saving = ref(false)
 const serverTesting = ref(false)
+const checkingUpdate = ref(false)
+const updateInfo = ref(null)
+const downloading = ref(false)
+const downloadProgress = ref(0)
+const currentVersion = ref('')
 
 const form = reactive({
   adminUsername: '',
@@ -91,6 +96,16 @@ onMounted(async () => {
 
   // 回退：使用当前 store 中的 baseUrl（可能是默认值）
   form.serverBaseUrl = generateStore.baseUrl || ''
+  
+  // 获取当前版本
+  if (window.go && window.go.main && window.go.main.App && window.go.main.App.GetCurrentVersion) {
+    try {
+      currentVersion.value = await window.go.main.App.GetCurrentVersion()
+    } catch (e) {
+      console.error('获取版本失败:', e)
+      currentVersion.value = '未知'
+    }
+  }
 })
 
 const handlePasswordChange = async () => {
@@ -219,6 +234,88 @@ const handleDownloadLogs = async () => {
         alert('下载失败: ' + e.message)
     }
 }
+
+// 检查更新
+const handleCheckUpdate = async () => {
+    if (checkingUpdate.value) return
+    
+    checkingUpdate.value = true
+    updateInfo.value = null
+    
+    try {
+        if (window.go && window.go.main && window.go.main.App && window.go.main.App.CheckForUpdates) {
+            const resultStr = await window.go.main.App.CheckForUpdates()
+            const result = JSON.parse(resultStr)
+            updateInfo.value = result
+            
+            if (result.has_update) {
+                // 有更新，显示提示
+            } else if (result.error) {
+                alert('检查更新失败: ' + result.error)
+            } else {
+                alert('当前已是最新版本')
+            }
+        } else {
+            alert('当前环境不支持更新检查（请在桌面客户端中使用）')
+        }
+    } catch (e) {
+        alert('检查更新失败: ' + (e.message || e))
+        updateInfo.value = null
+    } finally {
+        checkingUpdate.value = false
+    }
+}
+
+// 下载并安装更新
+const handleDownloadAndInstall = async () => {
+    if (!updateInfo.value || !updateInfo.value.has_update || !updateInfo.value.download_url) {
+        alert('没有可用的更新')
+        return
+    }
+    
+    if (!confirm(`确定要下载并安装版本 ${updateInfo.value.latest_version} 吗？\n\n应用将在安装完成后自动关闭。`)) {
+        return
+    }
+    
+    downloading.value = true
+    downloadProgress.value = 0
+    
+    try {
+        // 先下载
+        if (window.go && window.go.main && window.go.main.App && window.go.main.App.DownloadUpdate) {
+            const downloadResultStr = await window.go.main.App.DownloadUpdate(updateInfo.value.download_url)
+            const downloadResult = JSON.parse(downloadResultStr)
+            
+            if (!downloadResult.success) {
+                throw new Error(downloadResult.message || '下载失败')
+            }
+            
+            downloadProgress.value = 100
+            
+            // 下载完成后安装
+            if (window.go && window.go.main && window.go.main.App && window.go.main.App.InstallUpdate) {
+                const installResultStr = await window.go.main.App.InstallUpdate(downloadResult.local_path)
+                const installResult = JSON.parse(installResultStr)
+                
+                if (!installResult.success) {
+                    throw new Error(installResult.message || '安装失败')
+                }
+                
+                alert(installResult.message || '安装程序已启动，应用即将关闭')
+            } else {
+                alert('下载完成，但无法自动安装。请手动运行: ' + downloadResult.local_path)
+            }
+        } else {
+            alert('当前环境不支持自动更新（请在桌面客户端中使用）')
+        }
+    } catch (e) {
+        alert('更新失败: ' + (e.message || e))
+    } finally {
+        downloading.value = false
+        downloadProgress.value = 0
+    }
+}
+
 </script>
 
 <template>
@@ -335,6 +432,57 @@ const handleDownloadLogs = async () => {
           <input v-model.number="form.videoTimeout" type="number" />
         </div>
         <button class="btn-primary" @click="handleSaveTimeouts">保存超时配置</button>
+      </div>
+
+      <!-- Update Check -->
+      <div class="card">
+        <h3>应用更新</h3>
+        <div class="field">
+          <label>当前版本</label>
+          <div class="version-display">{{ currentVersion || '检查中...' }}</div>
+        </div>
+        
+        <div v-if="updateInfo && updateInfo.has_update" class="update-available">
+          <div class="update-info">
+            <p class="update-title">🎉 发现新版本 {{ updateInfo.latest_version }}</p>
+            <p class="update-current">当前版本: {{ updateInfo.current_version }}</p>
+            <div v-if="updateInfo.release_notes" class="release-notes">
+              <strong>更新内容:</strong>
+              <pre>{{ updateInfo.release_notes }}</pre>
+            </div>
+          </div>
+          
+          <div v-if="downloading" class="download-progress">
+            <div class="progress-bar">
+              <div class="progress-fill" :style="{ width: downloadProgress + '%' }"></div>
+            </div>
+            <p>下载中... {{ downloadProgress }}%</p>
+          </div>
+          
+          <div class="action-row">
+            <button 
+              class="btn-update" 
+              :disabled="downloading" 
+              @click="handleDownloadAndInstall"
+            >
+              {{ downloading ? '下载中...' : '下载并安装更新' }}
+            </button>
+          </div>
+        </div>
+        
+        <div v-else-if="updateInfo && !updateInfo.has_update && !updateInfo.error" class="update-status">
+          <p class="status-text">✓ 已是最新版本</p>
+        </div>
+        
+        <div class="action-row">
+          <button 
+            class="btn-secondary" 
+            :disabled="checkingUpdate || downloading" 
+            @click="handleCheckUpdate"
+          >
+            {{ checkingUpdate ? '检查中...' : '检查更新' }}
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -543,5 +691,122 @@ h3 {
 .dropdown-item.active {
     background: rgba(59, 130, 246, 0.3);
     color: #60a5fa;
+}
+
+/* Update Section */
+.version-display {
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 10px;
+    color: #38bdf8;
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.update-available {
+    background: rgba(34, 197, 94, 0.1);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+    border-radius: 8px;
+    padding: 16px;
+    margin-top: 12px;
+}
+
+.update-info {
+    margin-bottom: 16px;
+}
+
+.update-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #22c55e;
+    margin: 0 0 8px 0;
+}
+
+.update-current {
+    font-size: 12px;
+    color: #94a3b8;
+    margin: 0 0 12px 0;
+}
+
+.release-notes {
+    margin-top: 12px;
+    font-size: 12px;
+    color: #cbd5e1;
+}
+
+.release-notes strong {
+    color: #e2e8f0;
+    display: block;
+    margin-bottom: 6px;
+}
+
+.release-notes pre {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 10px;
+    margin: 8px 0 0 0;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 200px;
+    overflow-y: auto;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.download-progress {
+    margin: 16px 0;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 8px;
+    background: #1e293b;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #22c55e);
+    transition: width 0.3s ease;
+}
+
+.update-status {
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 12px;
+    text-align: center;
+}
+
+.status-text {
+    color: #60a5fa;
+    font-size: 14px;
+    margin: 0;
+}
+
+.btn-update {
+    background: linear-gradient(135deg, #22c55e, #16a34a);
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+    transition: transform 0.2s;
+}
+
+.btn-update:hover:not(:disabled) {
+    transform: scale(1.02);
+}
+
+.btn-update:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
 }
 </style>

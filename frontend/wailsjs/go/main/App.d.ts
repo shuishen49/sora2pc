@@ -12,17 +12,23 @@ export function ApiRequestBlob(arg1:string,arg2:string,arg3:string):Promise<stri
 
 export function CheckAccountAndSave(arg1:string):Promise<string>;
 
+export function CheckForUpdates():Promise<string>;
+
 export function ClearVideoDownloads():Promise<string>;
 
 export function CreateVideo(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<string>;
 
 export function DeleteTaskData(arg1:string,arg2:boolean):Promise<string>;
 
+export function DownloadUpdate(arg1:string):Promise<string>;
+
 export function FetchDrafts(arg1:string,arg2:string):Promise<string>;
 
 export function GetBaseURL():Promise<string>;
 
 export function GetBearerByTokenID(arg1:number):Promise<string>;
+
+export function GetCurrentVersion():Promise<string>;
 
 export function GetIncompleteVideoTasks():Promise<string>;
 
@@ -39,6 +45,8 @@ export function GetTokenIDByRemoteTaskID(arg1:string):Promise<string>;
 export function GetVideoDownloadsMap():Promise<string>;
 
 export function Greet(arg1:string):Promise<string>;
+
+export function InstallUpdate(arg1:string):Promise<string>;
 
 export function LogDebug(arg1:string):Promise<void>;
 

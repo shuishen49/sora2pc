@@ -22,6 +22,10 @@ export function CheckAccountAndSave(arg1) {
   return window['go']['main']['App']['CheckAccountAndSave'](arg1);
 }
 
+export function CheckForUpdates() {
+  return window['go']['main']['App']['CheckForUpdates']();
+}
+
 export function ClearVideoDownloads() {
   return window['go']['main']['App']['ClearVideoDownloads']();
 }
@@ -34,6 +38,10 @@ export function DeleteTaskData(arg1, arg2) {
   return window['go']['main']['App']['DeleteTaskData'](arg1, arg2);
 }
 
+export function DownloadUpdate(arg1) {
+  return window['go']['main']['App']['DownloadUpdate'](arg1);
+}
+
 export function FetchDrafts(arg1, arg2) {
   return window['go']['main']['App']['FetchDrafts'](arg1, arg2);
 }
@@ -44,6 +52,10 @@ export function GetBaseURL() {
 
 export function GetBearerByTokenID(arg1) {
   return window['go']['main']['App']['GetBearerByTokenID'](arg1);
+}
+
+export function GetCurrentVersion() {
+  return window['go']['main']['App']['GetCurrentVersion']();
 }
 
 export function GetIncompleteVideoTasks() {
@@ -76,6 +88,10 @@ export function GetVideoDownloadsMap() {
 
 export function Greet(arg1) {
   return window['go']['main']['App']['Greet'](arg1);
+}
+
+export function InstallUpdate(arg1) {
+  return window['go']['main']['App']['InstallUpdate'](arg1);
 }
 
 export function LogDebug(arg1) {

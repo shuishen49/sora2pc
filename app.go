@@ -25,8 +25,8 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// 应用版本�?- 每次发布新版本时更新此�?
-const AppVersion = "constAppVersion=0.0.2"
+// 应用版本号 - 每次发布新版本时更新此值
+const AppVersion = "0.0.2"
 
 // GitHub 仓库信息
 const (
@@ -42,7 +42,7 @@ type App struct {
 	fileServerPort int
 }
 
-// Config 用于�?SQLite 不可用时的文件配置回退
+// Config 用于当 SQLite 不可用时的文件配置回退
 type Config struct {
 	BaseURL string `json:"base_url"`
 }
@@ -62,7 +62,8 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	// 尝试初始�?SQLite，失败时自动降级为文件存�?	if err := a.initDB(); err != nil {
+	// 尝试初始化 SQLite，失败时自动降级为文件存储
+	if err := a.initDB(); err != nil {
 		runtime.LogWarning(a.ctx, fmt.Sprintf("初始化数据库失败，将使用文件配置: %v", err))
 	}
 }
@@ -72,11 +73,13 @@ func (a *App) Greet(name string) string {
 	return fmt.Sprintf("Hello %s, It's show time!", name)
 }
 
-// LogDebug 供前端打印调试信息，从命令行运行 exe 时会在终端看�?func (a *App) LogDebug(msg string) {
+// LogDebug 供前端打印调试信息，从命令行运行 exe 时会在终端看到
+func (a *App) LogDebug(msg string) {
 	runtime.LogInfo(a.ctx, "[前端] "+msg)
 }
 
-// initDB 初始�?SQLite 数据库和�?func (a *App) initDB() error {
+// initDB 初始化 SQLite 数据库和表
+func (a *App) initDB() error {
 	// 所有本地数据统一写入当前工作目录下的 accounts.db
 	baseDir, err := os.Getwd()
 	if err != nil {
@@ -85,14 +88,16 @@ func (a *App) Greet(name string) string {
 	dbPath := filepath.Join(baseDir, "accounts.db")
 	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
-		// �?CGO_DISABLED 环境下，go-sqlite3 会返�?stub 错误，这里直接忽略并退回文件存�?		if strings.Contains(err.Error(), "requires cgo") {
-			runtime.LogWarning(a.ctx, "CGO 被禁用，SQLite 将不可用，使用文件配置代�?)
+		// 在 CGO_DISABLED 环境下，go-sqlite3 会返回 stub 错误，这里直接忽略并退回文件存储
+		if strings.Contains(err.Error(), "requires cgo") {
+			runtime.LogWarning(a.ctx, "CGO 被禁用，SQLite 将不可用，使用文件配置代替")
 			return nil
 		}
 		return err
 	}
 
-	// 创建表（如不存在�?	schema := `
+	// 创建表（如不存在）
+	schema := `
 CREATE TABLE IF NOT EXISTS accounts (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	bearer_token TEXT NOT NULL,
@@ -152,15 +157,17 @@ CREATE TABLE IF NOT EXISTS task_list (
 `
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
-		// 同样处理可能�?stub 错误
+		// 同样处理可能的 stub 错误
 		if strings.Contains(err.Error(), "requires cgo") {
-			runtime.LogWarning(a.ctx, "CGO 被禁用，SQLite 将不可用，使用文件配置代�?)
+			runtime.LogWarning(a.ctx, "CGO 被禁用，SQLite 将不可用，使用文件配置代替")
 			return nil
 		}
 		return err
 	}
-	// 兼容旧库：若�?plan_type 列则添加（忽略已存在错误�?	_, _ = db.Exec("ALTER TABLE tokens ADD COLUMN plan_type TEXT DEFAULT ''")
-	// 兼容旧库：video_task_results 若无 progress_pct 则添�?	_, _ = db.Exec("ALTER TABLE video_task_results ADD COLUMN progress_pct REAL DEFAULT 0")
+	// 兼容旧库：若无 plan_type 列则添加（忽略已存在错误）
+	_, _ = db.Exec("ALTER TABLE tokens ADD COLUMN plan_type TEXT DEFAULT ''")
+	// 兼容旧库：video_task_results 若无 progress_pct 则添加
+	_, _ = db.Exec("ALTER TABLE video_task_results ADD COLUMN progress_pct REAL DEFAULT 0")
 	// 兼容旧库：video_task_results 若无 prompt 列则添加
 	_, _ = db.Exec("ALTER TABLE video_task_results ADD COLUMN prompt TEXT DEFAULT ''")
 	// 兼容旧库：video_downloads 若无 post_id 列则添加
@@ -170,7 +177,8 @@ CREATE TABLE IF NOT EXISTS task_list (
 	return nil
 }
 
-// loadConfig 从本�?config.json 读取配置（回退方案�?func (a *App) loadConfig() (*Config, error) {
+// loadConfig 从本地 config.json 读取配置（回退方案）
+func (a *App) loadConfig() (*Config, error) {
 	baseDir, err := os.Getwd()
 	if err != nil {
 		baseDir = "."
@@ -192,7 +200,8 @@ CREATE TABLE IF NOT EXISTS task_list (
 	return &cfg, nil
 }
 
-// saveConfig 将配置写入本�?config.json（回退方案�?func (a *App) saveConfig(cfg *Config) error {
+// saveConfig 将配置写入本地 config.json（回退方案）
+func (a *App) saveConfig(cfg *Config) error {
 	baseDir, err := os.Getwd()
 	if err != nil {
 		baseDir = "."
@@ -206,10 +215,12 @@ CREATE TABLE IF NOT EXISTS task_list (
 	return os.WriteFile(path, data, 0644)
 }
 
-// GetBaseURL 优先�?SQLite settings 表读�?BaseURL，若不可用则回退�?config.json，最后使用默认�?func (a *App) GetBaseURL() string {
+// GetBaseURL 优先从 SQLite settings 表读取 BaseURL，若不可用则回退到 config.json，最后使用默认值
+func (a *App) GetBaseURL() string {
 	const defaultURL = "http://127.0.0.1:8000"
 
-	// 1) 优先�?SQLite 读取（若可用�?	if a.db != nil {
+	// 1) 优先从 SQLite 读取（若可用）
+	if a.db != nil {
 		var val string
 		err := a.db.QueryRow(`SELECT value FROM settings WHERE key = 'base_url'`).Scan(&val)
 		if err == nil {
@@ -222,14 +233,15 @@ CREATE TABLE IF NOT EXISTS task_list (
 		}
 	}
 
-	// 2) 回退到本�?config.json
+	// 2) 回退到本地 config.json
 	if cfg, err := a.loadConfig(); err == nil && strings.TrimSpace(cfg.BaseURL) != "" {
 		return strings.TrimSpace(cfg.BaseURL)
 	} else if err != nil {
 		runtime.LogError(a.ctx, fmt.Sprintf("读取文件配置失败: %v", err))
 	}
 
-	// 3) 最终使用默认�?	return defaultURL
+	// 3) 最终使用默认值
+	return defaultURL
 }
 
 func (a *App) getSettingValue(key string) string {
@@ -251,29 +263,31 @@ func (a *App) setSettingValue(key, value string) {
 		ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
 }
 
-// SetBaseURL �?BaseURL 写入 SQLite settings 表，�?SQLite 不可用则写入 config.json
+// SetBaseURL 将 BaseURL 写入 SQLite settings 表，若 SQLite 不可用则写入 config.json
 func (a *App) SetBaseURL(url string) error {
 	trimmed := strings.TrimSpace(url)
 
-	// 1) �?SQLite 可用，先写入 settings �?	if a.db != nil {
+	// 1) 若 SQLite 可用，先写入 settings 表
+	if a.db != nil {
 		_, err := a.db.Exec(
 			`INSERT INTO settings (key, value) VALUES ('base_url', ?) 
 			 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
 			trimmed,
 		)
 		if err != nil {
-			runtime.LogError(a.ctx, fmt.Sprintf("保存 base_url �?SQLite 失败: %v", err))
+			runtime.LogError(a.ctx, fmt.Sprintf("保存 base_url 到 SQLite 失败: %v", err))
 		}
 	}
 
 	// 2) 无论 SQLite 是否成功，都写一份到 config.json 作为通用回退
 	cfg, err := a.loadConfig()
 	if err != nil {
-		// 如果连读都失败，就直接覆盖写新配�?		cfg = &Config{}
+		// 如果连读都失败，就直接覆盖写新配置
+		cfg = &Config{}
 	}
 	cfg.BaseURL = trimmed
 	if err := a.saveConfig(cfg); err != nil {
-		runtime.LogError(a.ctx, fmt.Sprintf("保存 base_url 到文件失�? %v", err))
+		runtime.LogError(a.ctx, fmt.Sprintf("保存 base_url 到文件失败: %v", err))
 		return err
 	}
 
@@ -307,25 +321,25 @@ func (a *App) CheckAccountAndSave(bearerToken string) (string, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	runtime.LogInfo(a.ctx, fmt.Sprintf("请求账号状�? %s", statusURL))
+	runtime.LogInfo(a.ctx, fmt.Sprintf("请求账号状态: %s", statusURL))
 
 	resp, err := client.Do(req)
 	if err != nil {
-		runtime.LogError(a.ctx, fmt.Sprintf("请求账号状态失�? %v", err))
+		runtime.LogError(a.ctx, fmt.Sprintf("请求账号状态失败: %v", err))
 		return "", err
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		runtime.LogError(a.ctx, fmt.Sprintf("读取账号状态响应失�? %v", err))
+		runtime.LogError(a.ctx, fmt.Sprintf("读取账号状态响应失败: %v", err))
 		return "", err
 	}
 
-	runtime.LogInfo(a.ctx, fmt.Sprintf("账号状态响�? HTTP %d, Body: %s", resp.StatusCode, string(respBody)))
+	runtime.LogInfo(a.ctx, fmt.Sprintf("账号状态响应: HTTP %d, Body: %s", resp.StatusCode, string(respBody)))
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("账号状态检查失�? HTTP %d: %s", resp.StatusCode, string(respBody))
+		return "", fmt.Errorf("账号状态检查失败: HTTP %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	// 解析 host/port 方便后续查询
@@ -339,7 +353,7 @@ func (a *App) CheckAccountAndSave(bearerToken string) (string, error) {
 		}
 	}
 
-	// 将结果写�?SQLite
+	// 将结果写入 SQLite
 	if a.db != nil {
 		_, err = a.db.Exec(
 			`INSERT INTO accounts (bearer_token, host, port, status_json, created_at) VALUES (?, ?, ?, ?, ?)`,
@@ -350,7 +364,7 @@ func (a *App) CheckAccountAndSave(bearerToken string) (string, error) {
 			time.Now(),
 		)
 		if err != nil {
-			runtime.LogError(a.ctx, fmt.Sprintf("写入账号�?SQLite 失败: %v", err))
+			runtime.LogError(a.ctx, fmt.Sprintf("写入账号到 SQLite 失败: %v", err))
 		}
 	} else {
 		runtime.LogError(a.ctx, "SQLite 数据库未初始化，无法写入账号信息")
@@ -359,7 +373,8 @@ func (a *App) CheckAccountAndSave(bearerToken string) (string, error) {
 	return string(respBody), nil
 }
 
-// AccountMe 调用远程服务器的 POST /account/me，使�?GetBaseURL()（填好的远程地址�?// 请求�? {"bearer_token": "..."}，返�?profile / my_info（含 email 等）
+// AccountMe 调用远程服务器的 POST /account/me，使用 GetBaseURL()（填好的远程地址）
+// 请求体: {"bearer_token": "..."}，返回 profile / my_info（含 email 等）
 func (a *App) AccountMe(bearerToken string) (string, error) {
 	if bearerToken == "" {
 		return "", fmt.Errorf("bearer_token 不能为空")
@@ -395,7 +410,7 @@ func (a *App) AccountMe(bearerToken string) (string, error) {
 	return string(respBody), nil
 }
 
-// AccountSubscriptions 调用远程 POST /account/subscriptions，传 bearer_token，返�?data[].plan.id 用于判断 free/plus
+// AccountSubscriptions 调用远程 POST /account/subscriptions，传 bearer_token，返回 data[].plan.id 用于判断 free/plus
 func (a *App) AccountSubscriptions(bearerToken string) (string, error) {
 	if bearerToken == "" {
 		return "", fmt.Errorf("bearer_token 不能为空")
@@ -431,7 +446,7 @@ func (a *App) AccountSubscriptions(bearerToken string) (string, error) {
 	return string(respBody), nil
 }
 
-// parsePlanTypeFromSubscriptions �?/account/subscriptions 响应中取最�?rank �?plan.id（chatgpt_free/chatgpt_plus 等）
+// parsePlanTypeFromSubscriptions 从 /account/subscriptions 响应中取最高 rank 的 plan.id（chatgpt_free/chatgpt_plus 等）
 func parsePlanTypeFromSubscriptions(body string) string {
 	var res struct {
 		Data []struct {
@@ -461,7 +476,7 @@ func parsePlanTypeFromSubscriptions(body string) string {
 	return ""
 }
 
-// isLocalApiPath 判断是否为本地管理接口（不应转发到远�?Sora 服务器）
+// isLocalApiPath 判断是否为本地管理接口（不应转发到远程 Sora 服务器）
 func isLocalApiPath(path string) bool {
 	if strings.HasPrefix(path, "/api/tokens") {
 		return true
@@ -496,7 +511,8 @@ func isLocalApiPath(path string) bool {
 	return false
 }
 
-// logApiLabel 根据 path 返回用于控制台打印的标签（create / pending / drafts），空串表示不单独打�?func logApiLabel(path string) string {
+// logApiLabel 根据 path 返回用于控制台打印的标签（create / pending / drafts），空串表示不单独打印
+func logApiLabel(path string) string {
 	switch {
 	case strings.Contains(path, "/videos") || strings.Contains(path, "videos"):
 		return "CREATE"
@@ -584,8 +600,9 @@ func (a *App) ApiRequest(method string, path string, body string, token string) 
 	return string(respBody), nil
 }
 
-// handleLocalApi 处理本地管理接口，不转发到远�?func (a *App) handleLocalApi(method string, path string, body string, _ string) (string, error) {
-	fullPath := path // 保留完整路径�?list 解析 query
+// handleLocalApi 处理本地管理接口，不转发到远程
+func (a *App) handleLocalApi(method string, path string, body string, _ string) (string, error) {
+	fullPath := path // 保留完整路径供 list 解析 query
 	path = strings.TrimPrefix(path, "/api")
 	if idx := strings.Index(path, "?"); idx >= 0 {
 		path = path[:idx]
@@ -600,7 +617,8 @@ func (a *App) ApiRequest(method string, path string, body string, token string) 
 	if len(parts) >= 1 && parts[0] == "tokens" {
 		return a.handleLocalTokens(method, fullPath, parts, body)
 	}
-	// /api/admin/config �?	if len(parts) >= 1 && parts[0] == "admin" {
+	// /api/admin/config 等
+	if len(parts) >= 1 && parts[0] == "admin" {
 		return a.handleLocalAdmin(method, path, parts, body)
 	}
 	// /api/logs
@@ -623,13 +641,13 @@ func (a *App) ApiRequest(method string, path string, body string, token string) 
 		return a.handleLocalTasks(method, path, parts, body)
 	}
 
-	return "", fmt.Errorf("本地接口未实�? %s %s", method, path)
+	return "", fmt.Errorf("本地接口未实现: %s %s", method, path)
 }
 
-// handleLocalTokens 处理 /api/tokens 的本�?CRUD
+// handleLocalTokens 处理 /api/tokens 的本地 CRUD
 func (a *App) handleLocalTokens(method string, rawPath string, parts []string, body string) (string, error) {
 	if a.db == nil {
-		return jsonFail("SQLite 未初始化，无法使�?Token 管理")
+		return jsonFail("SQLite 未初始化，无法使用 Token 管理")
 	}
 
 	// GET /api/tokens?page=1&limit=20
@@ -660,7 +678,7 @@ func (a *App) handleLocalTokens(method string, rawPath string, parts []string, b
 	if len(parts) >= 2 {
 		id, err := strconv.ParseInt(parts[1], 10, 64)
 		if err != nil {
-			return jsonFail("无效�?token id")
+			return jsonFail("无效的 token id")
 		}
 		if method == http.MethodPost && len(parts) == 2 {
 			return a.localTokenUpdate(id, body)
@@ -803,7 +821,7 @@ func (a *App) localTokenCreate(body string) (string, error) {
 		StatusResponse   string `json:"status_response"`
 	}
 	if err := json.Unmarshal([]byte(body), &input); err != nil {
-		return jsonFail("请求体解析失�?)
+		return jsonFail("请求体解析失败")
 	}
 	if strings.TrimSpace(input.Token) == "" {
 		return jsonFail("token 不能为空")
@@ -829,7 +847,7 @@ func (a *App) localTokenCreate(body string) (string, error) {
 		return jsonFail("写入失败: " + err.Error())
 	}
 	id, _ := res.LastInsertId()
-	// 请求 /account/subscriptions �?plan_type（free/plus 等）
+	// 请求 /account/subscriptions 获取 plan_type（free/plus 等）
 	if subBody, err := a.AccountSubscriptions(strings.TrimSpace(input.Token)); err == nil {
 		planType := parsePlanTypeFromSubscriptions(subBody)
 		if planType != "" {
@@ -867,7 +885,7 @@ func (a *App) localTokenUpdate(id int64, body string) (string, error) {
 		VideoConcurrency  *int   `json:"video_concurrency"`
 	}
 	if err := json.Unmarshal([]byte(body), &input); err != nil {
-		return jsonFail("请求体解析失�?)
+		return jsonFail("请求体解析失败")
 	}
 	if strings.TrimSpace(input.Token) == "" {
 		return jsonFail("token 不能为空")
@@ -902,7 +920,7 @@ func (a *App) localTokenDelete(id int64) (string, error) {
 func (a *App) localTokenTest(id int64) (string, error) {
 	var bearer string
 	if err := a.db.QueryRow(`SELECT token FROM tokens WHERE id=?`, id).Scan(&bearer); err != nil {
-		return jsonFail("Token 不存�?)
+		return jsonFail("Token 不存在")
 	}
 	respBody, err := a.CheckAccountAndSave(bearer)
 	if err != nil {
@@ -944,7 +962,9 @@ func (a *App) localTokenSetActive(id int64, active bool) (string, error) {
 	return jsonMarshal(map[string]interface{}{"success": true})
 }
 
-// GetRandomVideoToken 从数据库随机返回一个可用于视频生成�?token：状态正常、已启用视频、有剩余次数�?// 返回 JSON：{"bearer_token": "xxx", "token_id": 123} �?{"error": "..."}�?func (a *App) GetRandomVideoToken() (string, error) {
+// GetRandomVideoToken 从数据库随机返回一个可用于视频生成的 token：状态正常、已启用视频、有剩余次数
+// 返回 JSON：{"bearer_token": "xxx", "token_id": 123} 或 {"error": "..."}
+func (a *App) GetRandomVideoToken() (string, error) {
 	rows, err := a.db.Query(
 		`SELECT id, token, status_json FROM tokens WHERE is_active=1 AND video_enabled=1`)
 	if err != nil {
@@ -979,23 +999,25 @@ func (a *App) localTokenSetActive(id int64, active bool) (string, error) {
 				remaining = status.Rate.EstimatedNumVideosRemaining
 			}
 		}
-		// �?status 时也加入候选（由上游判断）；有 status 时要求剩余次�?> 0
+		// 无 status 时也加入候选（由上游判断）；有 status 时要求剩余次数 > 0
 		if remaining < 0 || remaining > 0 {
 			candidates = append(candidates, tokenRow{id: id, token: token, statusJSON: statusJSON})
 		}
 	}
 	if len(candidates) == 0 {
-		return jsonMarshal(map[string]interface{}{"error": "无可�?Token（需状态正常、已启用视频且有剩余次数�?})
+		return jsonMarshal(map[string]interface{}{"error": "无可用 Token（需状态正常、已启用视频且有剩余次数）"})
 	}
 	idx := rand.Intn(len(candidates))
 	c := candidates[idx]
 	return jsonMarshal(map[string]interface{}{"bearer_token": c.token, "token_id": c.id})
 }
 
-// GetBearerByTokenID 根据 token_id 查询该账号的 bearer token，供 pending 轮询时使用「创建任务时的同一账号」�?// 返回 JSON：{"bearer_token": "xxx"} �?{"error": "..."}�?func (a *App) GetBearerByTokenID(tokenId int64) (string, error) {
+// GetBearerByTokenID 根据 token_id 查询该账号的 bearer token，供 pending 轮询时使用「创建任务时的同一账号」
+// 返回 JSON：{"bearer_token": "xxx"} 或 {"error": "..."}
+func (a *App) GetBearerByTokenID(tokenId int64) (string, error) {
 	var bearer string
 	if err := a.db.QueryRow(`SELECT token FROM tokens WHERE id=?`, tokenId).Scan(&bearer); err != nil {
-		return jsonMarshal(map[string]interface{}{"error": "Token 不存在或已删�?})
+		return jsonMarshal(map[string]interface{}{"error": "Token 不存在或已删除"})
 	}
 	if strings.TrimSpace(bearer) == "" {
 		return jsonMarshal(map[string]interface{}{"error": "Token 为空"})
@@ -1003,7 +1025,10 @@ func (a *App) localTokenSetActive(id int64, active bool) (string, error) {
 	return jsonMarshal(map[string]interface{}{"bearer_token": bearer})
 }
 
-// CreateVideo 调用�?testsh/create.sh 相同的接口：POST {apiBaseURL}/videos，请求体�?bearer_token、prompt、orientation、size、n_frames、model�?// 用于「立即生成」视频任务，并在控制台打�?CREATE 请求/响应�?// orientation: portrait / landscape；nFrames: 300(10s) / 450(15s)�?func (a *App) CreateVideo(apiBaseURL string, bearerToken string, prompt string, orientation string, nFrames string) (string, error) {
+// CreateVideo 调用与 testsh/create.sh 相同的接口：POST {apiBaseURL}/videos，请求体为 bearer_token、prompt、orientation、size、n_frames、model
+// 用于「立即生成」视频任务，并在控制台打印 CREATE 请求/响应
+// orientation: portrait / landscape；nFrames: 300(10s) / 450(15s)
+func (a *App) CreateVideo(apiBaseURL string, bearerToken string, prompt string, orientation string, nFrames string) (string, error) {
 	apiBaseURL = strings.TrimRight(apiBaseURL, "/")
 	videoURL := apiBaseURL + "/videos"
 	nFramesInt := 300
@@ -1064,7 +1089,9 @@ func (a *App) localTokenSetActive(id int64, active bool) (string, error) {
 	return respStr, nil
 }
 
-// PollPending 调用�?testsh/test_pending.sh 相同的接口：POST {apiBaseURL}/pending，请求体�?bearer_token�?// 返回 pending 列表 JSON；返�?[] 表示任务已完成。用�?CreateVideo 成功后每 10s 轮询一次�?func (a *App) PollPending(apiBaseURL string, bearerToken string) (string, error) {
+// PollPending 调用与 testsh/test_pending.sh 相同的接口：POST {apiBaseURL}/pending，请求体为 bearer_token
+// 返回 pending 列表 JSON；返回 [] 表示任务已完成。用于 CreateVideo 成功后每 10s 轮询一次
+func (a *App) PollPending(apiBaseURL string, bearerToken string) (string, error) {
 	apiBaseURL = strings.TrimRight(apiBaseURL, "/")
 	pendingURL := apiBaseURL + "/pending"
 	body := map[string]string{"bearer_token": bearerToken}
@@ -1108,7 +1135,9 @@ func (a *App) localTokenSetActive(id int64, active bool) (string, error) {
 	return respStr, nil
 }
 
-// FetchDrafts 调用�?testsh/test_drafts.sh 相同的接口：POST {apiBaseURL}/drafts，请求体�?bearer_token、limit、offset�?// 返回 drafts 响应 JSON（含 items），�?pending 返回 [] 后拉取草稿并下载�?func (a *App) FetchDrafts(apiBaseURL string, bearerToken string) (string, error) {
+// FetchDrafts 调用与 testsh/test_drafts.sh 相同的接口：POST {apiBaseURL}/drafts，请求体为 bearer_token、limit、offset
+// 返回 drafts 响应 JSON（含 items），当 pending 返回 [] 后拉取草稿并下载
+func (a *App) FetchDrafts(apiBaseURL string, bearerToken string) (string, error) {
 	apiBaseURL = strings.TrimRight(apiBaseURL, "/")
 	draftsURL := apiBaseURL + "/drafts"
 	body := map[string]interface{}{
@@ -1156,7 +1185,8 @@ func (a *App) localTokenSetActive(id int64, active bool) (string, error) {
 	return respStr, nil
 }
 
-// SaveVideoTaskResult 保存视频创建成功后的结果：写�?video_task_results，并�?estimated_num_videos_remaining、access_resets_in_seconds 更新对应 token �?status_json�?// resultJson 格式示例：{"id":"task_01kg...","rate_limit_and_credit_balance":{"estimated_num_videos_remaining":29,"access_resets_in_seconds":85511,...},...}
+// SaveVideoTaskResult 保存视频创建成功后的结果：写入 video_task_results，并用 estimated_num_videos_remaining、access_resets_in_seconds 更新对应 token 的 status_json
+// resultJson 格式示例：{"id":"task_01kg...","rate_limit_and_credit_balance":{"estimated_num_videos_remaining":29,"access_resets_in_seconds":85511,...},...}
 func (a *App) SaveVideoTaskResult(tokenId int64, resultJson string, prompt string) (string, error) {
 	var result struct {
 		ID                      string `json:"id"`
@@ -1182,7 +1212,7 @@ func (a *App) SaveVideoTaskResult(tokenId int64, resultJson string, prompt strin
 		return jsonFail("写入 video_task_results 失败: " + err.Error())
 	}
 	if result.RateLimitAndCreditBalance != nil {
-		// 更新�?token �?status_json：合�?rate_limit 信息（剩余次数、恢复时间）
+		// 更新该 token 的 status_json：合并 rate_limit 信息（剩余次数、恢复时间）
 		rate := result.RateLimitAndCreditBalance
 		var status map[string]interface{}
 		var statusJSON sql.NullString
@@ -1205,7 +1235,8 @@ func (a *App) SaveVideoTaskResult(tokenId int64, resultJson string, prompt strin
 	return jsonMarshal(map[string]interface{}{"success": true, "task_id": taskID})
 }
 
-// UpdateVideoTaskProgress 更新 video_task_results 中该 task_id 的进度百分比（pending 轮询得到 progress_pct 时调用）�?func (a *App) UpdateVideoTaskProgress(taskId string, progressPct float64) (string, error) {
+// UpdateVideoTaskProgress 更新 video_task_results 中该 task_id 的进度百分比（pending 轮询得到 progress_pct 时调用）
+func (a *App) UpdateVideoTaskProgress(taskId string, progressPct float64) (string, error) {
 	taskId = strings.TrimSpace(taskId)
 	if taskId == "" {
 		return jsonFail("task_id 不能为空")
@@ -1217,7 +1248,9 @@ func (a *App) SaveVideoTaskResult(tokenId int64, resultJson string, prompt strin
 	return jsonMarshal(map[string]interface{}{"success": true})
 }
 
-// GetTokenIDByRemoteTaskID 根据 remote_task_id（即 video_task_results.task_id）查询创建该任务时用�?token_id，供页面加载后恢�?pending 时取 bearer�?// 返回 JSON：{"token_id": 10} �?{"error": "..."}�?func (a *App) GetTokenIDByRemoteTaskID(remoteTaskId string) (string, error) {
+// GetTokenIDByRemoteTaskID 根据 remote_task_id（即 video_task_results.task_id）查询创建该任务时用的 token_id，供页面加载后恢复 pending 时取 bearer
+// 返回 JSON：{"token_id": 10} 或 {"error": "..."}
+func (a *App) GetTokenIDByRemoteTaskID(remoteTaskId string) (string, error) {
 	remoteTaskId = strings.TrimSpace(remoteTaskId)
 	if remoteTaskId == "" {
 		return jsonMarshal(map[string]interface{}{"error": "remote_task_id 不能为空"})
@@ -1229,13 +1262,15 @@ func (a *App) SaveVideoTaskResult(tokenId int64, resultJson string, prompt strin
 	return jsonMarshal(map[string]interface{}{"token_id": tokenID})
 }
 
-// GetIncompleteVideoTasks �?SQLite 查询未完成的视频任务（progress_pct < 100），供页面加载时恢复 pending 轮询�?// 返回 JSON：{"tasks": [{"task_id": "xxx", "token_id": 10}, ...]}，无数据�?tasks 为空数组；出错时 {"error": "..."}�?func (a *App) GetIncompleteVideoTasks() (string, error) {
+// GetIncompleteVideoTasks 从 SQLite 查询未完成的视频任务（progress_pct < 100），供页面加载时恢复 pending 轮询
+// 返回 JSON：{"tasks": [{"task_id": "xxx", "token_id": 10}, ...]}，无数据时 tasks 为空数组；出错时 {"error": "..."}
+func (a *App) GetIncompleteVideoTasks() (string, error) {
 	if a.db == nil {
 		return jsonMarshal(map[string]interface{}{"tasks": []interface{}{}})
 	}
 	rows, err := a.db.Query(`SELECT task_id, token_id FROM video_task_results WHERE progress_pct < 100 OR progress_pct IS NULL ORDER BY created_at ASC`)
 	if err != nil {
-		return jsonFail("查询未完成视频任务失�? " + err.Error())
+		return jsonFail("查询未完成视频任务失败: " + err.Error())
 	}
 	defer rows.Close()
 	var list []map[string]interface{}
@@ -1249,7 +1284,7 @@ func (a *App) SaveVideoTaskResult(tokenId int64, resultJson string, prompt strin
 	}
 	out := map[string]interface{}{"tasks": list}
 	needPending := len(list) > 0
-	runtime.LogInfo(a.ctx, fmt.Sprintf("[GetIncompleteVideoTasks] 读取结果: %d �? 是否需要继�?pending: %v", len(list), needPending))
+	runtime.LogInfo(a.ctx, fmt.Sprintf("[GetIncompleteVideoTasks] 读取结果: %d 条, 是否需要继续 pending: %v", len(list), needPending))
 	outStr, err := jsonMarshal(out)
 	if err == nil {
 		runtime.LogInfo(a.ctx, "[GetIncompleteVideoTasks] 明细: "+outStr)
@@ -1257,7 +1292,8 @@ func (a *App) SaveVideoTaskResult(tokenId int64, resultJson string, prompt strin
 	return outStr, err
 }
 
-// drafts 响应中的单个 item 结构（仅解析所需字段�?type draftsItem struct {
+// drafts 响应中的单个 item 结构（仅解析所需字段）
+type draftsItem struct {
 	ID              string `json:"id"`
 	GenerationID    string `json:"generation_id"`
 	TaskID         string `json:"task_id"`
@@ -1265,11 +1301,12 @@ func (a *App) SaveVideoTaskResult(tokenId int64, resultJson string, prompt strin
 	Prompt         string `json:"prompt"`
 }
 
-// SaveDraftsAndDownload 解析 drafts 响应 JSON，仅下载 completedTaskId 对应的那条，写入 video_downloads 表�?// completedTaskId 为空则不下任何下载（避免误下全部）；格式：{"items":[{"task_id":"task_01kgg...","downloadable_url":"https://...",...}],"cursor":"..."}
+// SaveDraftsAndDownload 解析 drafts 响应 JSON，仅下载 completedTaskId 对应的那条，写入 video_downloads 表
+// completedTaskId 为空则不下任何下载（避免误下全部）；格式：{"items":[{"task_id":"task_01kgg...","downloadable_url":"https://...",...}],"cursor":"..."}
 func (a *App) SaveDraftsAndDownload(draftsJson string, completedTaskId string) (string, error) {
 	completedTaskId = strings.TrimSpace(completedTaskId)
 	if completedTaskId == "" {
-		return jsonMarshal(map[string]interface{}{"success": true, "message": "未指�?completedTaskId，跳过下�?, "downloaded": 0})
+		return jsonMarshal(map[string]interface{}{"success": true, "message": "未指定 completedTaskId，跳过下载", "downloaded": 0})
 	}
 	var drafts struct {
 		Items  []draftsItem `json:"items"`
@@ -1278,7 +1315,7 @@ func (a *App) SaveDraftsAndDownload(draftsJson string, completedTaskId string) (
 	if err := json.Unmarshal([]byte(draftsJson), &drafts); err != nil {
 		return jsonFail("draftsJson 解析失败: " + err.Error())
 	}
-	// 只保�?task_id 与刚完成任务一致的那条
+	// 只保留 task_id 与刚完成任务一致的那条
 	var target *draftsItem
 	for i := range drafts.Items {
 		if strings.TrimSpace(drafts.Items[i].TaskID) == completedTaskId {
@@ -1287,7 +1324,7 @@ func (a *App) SaveDraftsAndDownload(draftsJson string, completedTaskId string) (
 		}
 	}
 	if target == nil {
-		runtime.LogInfo(a.ctx, fmt.Sprintf("[SaveDraftsAndDownload] drafts 中未找到 task_id=%s，跳过下�?, completedTaskId))
+		runtime.LogInfo(a.ctx, fmt.Sprintf("[SaveDraftsAndDownload] drafts 中未找到 task_id=%s，跳过下载", completedTaskId))
 		return jsonMarshal(map[string]interface{}{"success": true, "message": "drafts 中无对应 task_id", "downloaded": 0})
 	}
 
@@ -1329,7 +1366,7 @@ func (a *App) SaveDraftsAndDownload(draftsJson string, completedTaskId string) (
 							`INSERT OR REPLACE INTO video_downloads (generation_id, task_id, downloadable_url, local_path, created_at) VALUES (?, ?, ?, ?, ?)`,
 							genID, nullStr(taskID), urlStr, localPath, time.Now())
 						downloaded = 1
-						runtime.LogInfo(a.ctx, fmt.Sprintf("[SaveDraftsAndDownload] 已下�? %s (task_id=%s)", localPath, taskID))
+						runtime.LogInfo(a.ctx, fmt.Sprintf("[SaveDraftsAndDownload] 已下载: %s (task_id=%s)", localPath, taskID))
 					}
 				} else {
 					resp.Body.Close()
@@ -1339,16 +1376,17 @@ func (a *App) SaveDraftsAndDownload(draftsJson string, completedTaskId string) (
 			}
 		}
 	}
-	runtime.LogInfo(a.ctx, fmt.Sprintf("[SaveDraftsAndDownload] 共下�?%d 个视频到 %s", downloaded, downloadDir))
+	runtime.LogInfo(a.ctx, fmt.Sprintf("[SaveDraftsAndDownload] 共下载 %d 个视频到 %s", downloaded, downloadDir))
 	return jsonMarshal(map[string]interface{}{
 		"success":     true,
-		"message":     fmt.Sprintf("已下�?%d 个视频到 %s", downloaded, downloadDir),
+		"message":     fmt.Sprintf("已下载 %d 个视频到 %s", downloaded, downloadDir),
 		"downloaded":  downloaded,
 		"download_dir": downloadDir,
 	})
 }
 
-// ClearVideoDownloads 清空 video_downloads 表并删除 downloads 文件夹下所有文件（用于纠错或重置）�?func (a *App) ClearVideoDownloads() (string, error) {
+// ClearVideoDownloads 清空 video_downloads 表并删除 downloads 文件夹下所有文件（用于纠错或重置）
+func (a *App) ClearVideoDownloads() (string, error) {
 	baseDir, err := os.Getwd()
 	if err != nil {
 		baseDir = "."
@@ -1368,11 +1406,13 @@ func (a *App) SaveDraftsAndDownload(draftsJson string, completedTaskId string) (
 	if a.db != nil {
 		_, _ = a.db.Exec(`DELETE FROM video_downloads`)
 	}
-	runtime.LogInfo(a.ctx, fmt.Sprintf("[ClearVideoDownloads] 已删�?%d 个文件并清空 video_downloads �?, removed))
+	runtime.LogInfo(a.ctx, fmt.Sprintf("[ClearVideoDownloads] 已删除 %d 个文件并清空 video_downloads 表", removed))
 	return jsonMarshal(map[string]interface{}{"success": true, "removed_files": removed})
 }
 
-// DeleteTaskData 删除指定 task_id 的数据库记录，可选删除本地文件�?// deleteFile=true 时删�?video_downloads.local_path 对应文件�?func (a *App) DeleteTaskData(taskId string, deleteFile bool) (string, error) {
+// DeleteTaskData 删除指定 task_id 的数据库记录，可选删除本地文件
+// deleteFile=true 时删除 video_downloads.local_path 对应文件
+func (a *App) DeleteTaskData(taskId string, deleteFile bool) (string, error) {
 	taskId = strings.TrimSpace(taskId)
 	if taskId == "" {
 		return jsonFail("task_id 不能为空")
@@ -1392,7 +1432,8 @@ func (a *App) SaveDraftsAndDownload(draftsJson string, completedTaskId string) (
 	return jsonMarshal(map[string]interface{}{"success": true})
 }
 
-// ReDownloadVideo 根据 task_id 重新下载视频并返回可用信息�?func (a *App) ReDownloadVideo(taskId string) (string, error) {
+// ReDownloadVideo 根据 task_id 重新下载视频并返回可用信息
+func (a *App) ReDownloadVideo(taskId string) (string, error) {
 	taskId = strings.TrimSpace(taskId)
 	if taskId == "" {
 		return jsonFail("task_id 不能为空")
@@ -1403,7 +1444,7 @@ func (a *App) SaveDraftsAndDownload(draftsJson string, completedTaskId string) (
 	var urlStr, localPath, genID string
 	if err := a.db.QueryRow(`SELECT downloadable_url, local_path, generation_id FROM video_downloads WHERE task_id=? ORDER BY created_at DESC LIMIT 1`, taskId).
 		Scan(&urlStr, &localPath, &genID); err != nil {
-		return jsonFail("未找到该任务的下载记�?)
+		return jsonFail("未找到该任务的下载记录")
 	}
 	urlStr = strings.TrimSpace(urlStr)
 	if urlStr == "" {
@@ -1419,7 +1460,7 @@ func (a *App) SaveDraftsAndDownload(draftsJson string, completedTaskId string) (
 	}
 	if strings.TrimSpace(localPath) == "" {
 		if strings.TrimSpace(genID) == "" {
-			return jsonFail("缺少本地路径�?generation_id")
+			return jsonFail("缺少本地路径和 generation_id")
 		}
 		localPath = filepath.Join(downloadDir, strings.TrimSpace(genID)+".mp4")
 	}
@@ -1586,7 +1627,8 @@ func (a *App) fetchPublishedShareURL(apiBaseURL, bearer, taskId, generationID st
 	return extractAnyURL(resp), postID, nil
 }
 
-// PublishAndDownloadNoWatermark 先发布视频，再获取发布地址并解析无水印直链，最后覆盖下载到本地�?func (a *App) PublishAndDownloadNoWatermark(apiBaseURL string, taskId string, parseURL string, parseToken string) (string, error) {
+// PublishAndDownloadNoWatermark 先发布视频，再获取发布地址并解析无水印直链，最后覆盖下载到本地
+func (a *App) PublishAndDownloadNoWatermark(apiBaseURL string, taskId string, parseURL string, parseToken string) (string, error) {
 	taskId = strings.TrimSpace(taskId)
 	if taskId == "" {
 		return jsonFail("task_id 不能为空")
@@ -1605,11 +1647,11 @@ func (a *App) fetchPublishedShareURL(apiBaseURL, bearer, taskId, generationID st
 	var tokenID int64
 	var prompt sql.NullString
 	if err := a.db.QueryRow(`SELECT token_id, prompt FROM video_task_results WHERE task_id=?`, taskId).Scan(&tokenID, &prompt); err != nil {
-		return jsonFail("未找到该任务�?token_id")
+		return jsonFail("未找到该任务的 token_id")
 	}
 	var bearer string
 	if err := a.db.QueryRow(`SELECT token FROM tokens WHERE id=?`, tokenID).Scan(&bearer); err != nil {
-		return jsonFail("未找到该任务�?bearer token")
+		return jsonFail("未找到该任务的 bearer token")
 	}
 	bearer = strings.TrimSpace(bearer)
 	if bearer == "" {
@@ -1619,7 +1661,7 @@ func (a *App) fetchPublishedShareURL(apiBaseURL, bearer, taskId, generationID st
 	var generationID, localPath string
 	if err := a.db.QueryRow(`SELECT generation_id, local_path FROM video_downloads WHERE task_id=? ORDER BY created_at DESC LIMIT 1`, taskId).
 		Scan(&generationID, &localPath); err != nil {
-		return jsonFail("未找到该任务�?generation_id")
+		return jsonFail("未找到该任务的 generation_id")
 	}
 	generationID = strings.TrimSpace(generationID)
 	if generationID == "" {
@@ -1694,7 +1736,8 @@ func (a *App) fetchPublishedShareURL(apiBaseURL, bearer, taskId, generationID st
 		return jsonFail("未解析到发布地址")
 	}
 
-	// 3) 解析无水印直�?	noWmURL := ""
+	// 3) 解析无水印直链
+	noWmURL := ""
 	if looksLikeDirectMediaURL(publishedURL) {
 		noWmURL = publishedURL
 	} else {
@@ -1704,7 +1747,7 @@ func (a *App) fetchPublishedShareURL(apiBaseURL, bearer, taskId, generationID st
 			parseURL = "https://api.sorai.me/get-sora-link"
 		}
 		if parseToken == "" {
-			return jsonFail("无水印解�?token 为空")
+			return jsonFail("无水印解析 token 为空")
 		}
 		runtime.LogInfo(a.ctx, fmt.Sprintf("[PublishNoWM] POST %s (get-sora-link)", parseURL))
 		parseResp, err := a.simplePostJSON(parseURL, map[string]interface{}{
@@ -1712,12 +1755,12 @@ func (a *App) fetchPublishedShareURL(apiBaseURL, bearer, taskId, generationID st
 			"token": parseToken,
 		})
 		if err != nil {
-			return jsonFail("解析无水印失�? " + err.Error())
+			return jsonFail("解析无水印失败: " + err.Error())
 		}
 		logSafeJSON(a.ctx, "[PublishNoWM] get-sora-link 响应: ", parseResp)
 		noWmURL = extractAnyURL(parseResp)
 		if noWmURL == "" {
-			return jsonFail("未解析到无水印直�?)
+			return jsonFail("未解析到无水印直链")
 		}
 	}
 
@@ -1734,7 +1777,7 @@ func (a *App) fetchPublishedShareURL(apiBaseURL, bearer, taskId, generationID st
 		localPath = filepath.Join(downloadDir, generationID+".mp4")
 	}
 	if err := downloadToFile(noWmURL, localPath); err != nil {
-		return jsonFail("下载无水印视频失�? " + err.Error())
+		return jsonFail("下载无水印视频失败: " + err.Error())
 	}
 	runtime.LogInfo(a.ctx, fmt.Sprintf("[PublishNoWM] 已下载并覆盖: %s", localPath))
 	if postID == "" {
@@ -1750,7 +1793,9 @@ func (a *App) fetchPublishedShareURL(apiBaseURL, bearer, taskId, generationID st
 	})
 }
 
-// GetTaskList �?SQLite 读取任务列表 JSON（key="list"），并合并本地下载路径�?// �?task_list 为空，则回退�?video_task_results 生成占位任务，便于查看已完成任务�?func (a *App) GetTaskList() (string, error) {
+// GetTaskList 从 SQLite 读取任务列表 JSON（key="list"），并合并本地下载路径
+// 若 task_list 为空，则回退到 video_task_results 生成占位任务，便于查看已完成任务
+func (a *App) GetTaskList() (string, error) {
 	if a.db == nil {
 		return "[]", nil
 	}
@@ -1785,7 +1830,7 @@ func (a *App) fetchPublishedShareURL(apiBaseURL, bearer, taskId, generationID st
 						}
 					}
 				}
-				runtime.LogInfo(a.ctx, fmt.Sprintf("[GetTaskList] task_list 合并 localPath: %d �?, len(list)))
+				runtime.LogInfo(a.ctx, fmt.Sprintf("[GetTaskList] task_list 合并 localPath: %d 条", len(list)))
 				if len(list) > 0 {
 					runtime.LogInfo(a.ctx, fmt.Sprintf("[GetTaskList] 示例: id=%v localPath=%v", list[0]["id"], list[0]["localPath"]))
 				}
@@ -1824,7 +1869,7 @@ func (a *App) fetchPublishedShareURL(apiBaseURL, bearer, taskId, generationID st
 			promptText = strings.TrimSpace(prompt.String)
 		}
 		if promptText == "" && taskID != "" {
-			promptText = "临时提示词（待补�?
+			promptText = "临时提示词（待补充）"
 			_, _ = a.db.Exec(`UPDATE video_task_results SET prompt=? WHERE task_id=?`, promptText, taskID)
 		}
 		localPath := downloads[taskID]
@@ -1838,7 +1883,7 @@ func (a *App) fetchPublishedShareURL(apiBaseURL, bearer, taskId, generationID st
 			"prompt":           promptText,
 			"status":           status,
 			"progress":         pct,
-			"message":          "来自数据�?,
+			"message":          "来自数据库",
 			"remoteTaskId":     taskID,
 			"tokenIdForPending": tokenID,
 			"result":           resultJSON.String,
@@ -1847,14 +1892,15 @@ func (a *App) fetchPublishedShareURL(apiBaseURL, bearer, taskId, generationID st
 		})
 	}
 	if len(list) == 0 {
-		runtime.LogInfo(a.ctx, "[GetTaskList] 回退 video_task_results�? �?)
+		runtime.LogInfo(a.ctx, "[GetTaskList] 回退 video_task_results: 0 条")
 		return "[]", nil
 	}
-	runtime.LogInfo(a.ctx, fmt.Sprintf("[GetTaskList] 回退 video_task_results�?d �?, len(list)))
+	runtime.LogInfo(a.ctx, fmt.Sprintf("[GetTaskList] 回退 video_task_results: %d 条", len(list)))
 	return jsonMarshal(list)
 }
 
-// SetTaskList 将任务列�?JSON 写入 SQLite（key="list"）�?func (a *App) SetTaskList(jsonStr string) (string, error) {
+// SetTaskList 将任务列表 JSON 写入 SQLite（key="list"）
+func (a *App) SetTaskList(jsonStr string) (string, error) {
 	if a.db == nil {
 		return jsonMarshal(map[string]interface{}{"success": true})
 	}
@@ -1865,7 +1911,8 @@ func (a *App) fetchPublishedShareURL(apiBaseURL, bearer, taskId, generationID st
 	return jsonMarshal(map[string]interface{}{"success": true})
 }
 
-// GetVideoDownloadsMap 返回 task_id -> local_path 的映射，用于前端显示本地预览�?func (a *App) GetVideoDownloadsMap() (string, error) {
+// GetVideoDownloadsMap 返回 task_id -> local_path 的映射，用于前端显示本地预览
+func (a *App) GetVideoDownloadsMap() (string, error) {
 	if a.db == nil {
 		return jsonMarshal(map[string]interface{}{"map": map[string]string{}})
 	}
@@ -1888,7 +1935,8 @@ func (a *App) fetchPublishedShareURL(apiBaseURL, bearer, taskId, generationID st
 	return jsonMarshal(map[string]interface{}{"map": m})
 }
 
-// GetLocalFileDataURL 读取本地文件并返�?data URL（用于前端预览本�?MP4）�?func (a *App) GetLocalFileDataURL(path string) (string, error) {
+// GetLocalFileDataURL 读取本地文件并返回 data URL（用于前端预览本地 MP4）
+func (a *App) GetLocalFileDataURL(path string) (string, error) {
 	p := strings.TrimSpace(path)
 	if p == "" {
 		return "", fmt.Errorf("path 不能为空")
@@ -1957,7 +2005,8 @@ func (a *App) ensureLocalFileServer() (int, error) {
 	return a.fileServerPort, startErr
 }
 
-// GetLocalFileURL 返回本地文件的可访问 URL（流式播放）�?func (a *App) GetLocalFileURL(path string) (string, error) {
+// GetLocalFileURL 返回本地文件的可访问 URL（流式播放）
+func (a *App) GetLocalFileURL(path string) (string, error) {
 	p := strings.TrimSpace(path)
 	if p == "" {
 		return "", fmt.Errorf("path 不能为空")
@@ -1989,7 +2038,7 @@ func (a *App) localTokensImport(body string) (string, error) {
 		Mode   string   `json:"mode"`
 	}
 	if err := json.Unmarshal([]byte(body), &input); err != nil {
-		return jsonFail("请求体解析失�?)
+		return jsonFail("请求体解析失败")
 	}
 	now := time.Now()
 	added := 0
@@ -2007,7 +2056,7 @@ func (a *App) localTokensImport(body string) (string, error) {
 		}
 		added++
 	}
-	return jsonMarshal(map[string]interface{}{"success": true, "message": fmt.Sprintf("成功导入 %d �?Token", added), "imported": added})
+	return jsonMarshal(map[string]interface{}{"success": true, "message": fmt.Sprintf("成功导入 %d 个 Token", added), "imported": added})
 }
 
 func (a *App) localTokensBatch(method string, parts []string, body string) (string, error) {
@@ -2036,31 +2085,31 @@ func (a *App) localTokensBatch(method string, parts []string, body string) (stri
 		for _, id := range tokenIDs {
 			_, _ = a.db.Exec(`UPDATE tokens SET is_active=1, updated_at=? WHERE id=?`, now, id)
 		}
-		return jsonMarshal(map[string]interface{}{"success": true, "message": "已批量启�?})
+		return jsonMarshal(map[string]interface{}{"success": true, "message": "已批量启用"})
 	case "disable-selected":
 		for _, id := range tokenIDs {
 			_, _ = a.db.Exec(`UPDATE tokens SET is_active=0, updated_at=? WHERE id=?`, now, id)
 		}
-		return jsonMarshal(map[string]interface{}{"success": true, "message": "已批量禁�?})
+		return jsonMarshal(map[string]interface{}{"success": true, "message": "已批量禁用"})
 	case "delete-disabled":
 		for _, id := range tokenIDs {
 			_, _ = a.db.Exec(`DELETE FROM tokens WHERE id=?`, id)
 		}
-		return jsonMarshal(map[string]interface{}{"success": true, "message": "已批量删�?})
+		return jsonMarshal(map[string]interface{}{"success": true, "message": "已批量删除"})
 	case "update-proxy":
 		var input struct {
 			TokenIDs []int64 `json:"token_ids"`
 			ProxyURL string  `json:"proxy_url"`
 		}
 		if err := json.Unmarshal([]byte(body), &input); err != nil {
-			return jsonFail("请求体解析失�?)
+			return jsonFail("请求体解析失败")
 		}
 		for _, id := range input.TokenIDs {
 			_, _ = a.db.Exec(`UPDATE tokens SET proxy_url=?, updated_at=? WHERE id=?`, input.ProxyURL, now, id)
 		}
-		return jsonMarshal(map[string]interface{}{"success": true, "message": "代理已更�?})
+		return jsonMarshal(map[string]interface{}{"success": true, "message": "代理已更新"})
 	default:
-		return jsonFail("未知�?batch 操作: " + action)
+		return jsonFail("未知的 batch 操作: " + action)
 	}
 }
 
@@ -2150,7 +2199,7 @@ func (a *App) handleLocalConfigDefault(prefix string, method string, path string
 				CustomParseToken     string `json:"custom_parse_token"`
 			}
 			if err := json.Unmarshal([]byte(body), &input); err != nil {
-				return jsonFail("请求体解析失�?)
+				return jsonFail("请求体解析失败")
 			}
 			if a.db != nil {
 				a.setSettingValue("watermark_free_enabled", strconv.FormatBool(input.WatermarkFreeEnabled))
@@ -2182,10 +2231,10 @@ func (a *App) handleLocalConfigDefault(prefix string, method string, path string
 }
 
 func (a *App) handleLocalTasks(method string, path string, parts []string, body string) (string, error) {
-	return jsonMarshal(map[string]interface{}{"success": true, "message": "本地模式下任务取消请在前端处�?})
+	return jsonMarshal(map[string]interface{}{"success": true, "message": "本地模式下任务取消请在前端处理"})
 }
 
-// ApiRequestBlob 用于下载文件等二进制内容，返�?base64 编码的字符串
+// ApiRequestBlob 用于下载文件等二进制内容，返回 base64 编码的字符串
 func (a *App) ApiRequestBlob(method string, path string, token string) (string, error) {
 	base := strings.TrimRight(a.GetBaseURL(), "/")
 	fullURL := base + path
@@ -2218,7 +2267,7 @@ func (a *App) ApiRequestBlob(method string, path string, token string) (string, 
 		base64Encode(respBody)), nil
 }
 
-// TestServerHealth 测试指定或当前服务器�?/health 接口
+// TestServerHealth 测试指定或当前服务器的 /health 接口
 func (a *App) TestServerHealth(baseURL string) (*HealthResult, error) {
 	base := strings.TrimSpace(baseURL)
 	if base == "" {
@@ -2237,7 +2286,7 @@ func (a *App) TestServerHealth(baseURL string) (*HealthResult, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	runtime.LogInfo(a.ctx, fmt.Sprintf("测试服务器健康状�? %s", testURL))
+	runtime.LogInfo(a.ctx, fmt.Sprintf("测试服务器健康状态: %s", testURL))
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -2253,7 +2302,7 @@ func (a *App) TestServerHealth(baseURL string) (*HealthResult, error) {
 	if resp.StatusCode != http.StatusOK {
 		return &HealthResult{
 			Ok:      false,
-			Message: fmt.Sprintf("服务器响应异�?(HTTP %d): %s", resp.StatusCode, string(body)),
+			Message: fmt.Sprintf("服务器响应异常 (HTTP %d): %s", resp.StatusCode, string(body)),
 		}, nil
 	}
 
@@ -2271,7 +2320,7 @@ func (a *App) TestServerHealth(baseURL string) (*HealthResult, error) {
 	// 200 但内容不标准，也认为连通，只是提示用户手动确认
 	return &HealthResult{
 		Ok:      true,
-		Message: "服务器已连接，但返回内容非标准格式，请手动确认服务是否正�?,
+		Message: "服务器已连接，但返回内容非标准格式，请手动确认服务是否正常",
 	}, nil
 }
 
@@ -2294,7 +2343,7 @@ func (a *App) GetCurrentVersion() string {
 	return AppVersion
 }
 
-// CheckForUpdates 检�?GitHub Releases 是否有新版本
+// CheckForUpdates 检查 GitHub Releases 是否有新版本
 func (a *App) CheckForUpdates() (string, error) {
 	currentVersion := AppVersion
 	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", GitHubOwner, GitHubRepo)
@@ -2382,7 +2431,8 @@ func (a *App) CheckForUpdates() (string, error) {
 		
 		// macOS 平台
 		if platform == "darwin" {
-			// 优先选择对应架构的版�?			if arch == "arm64" && strings.Contains(assetName, "arm64") {
+		// 优先选择对应架构的版本
+		if arch == "arm64" && strings.Contains(assetName, "arm64") {
 				downloadURL = asset.BrowserDownloadURL
 				break
 			}
@@ -2397,7 +2447,8 @@ func (a *App) CheckForUpdates() (string, error) {
 		}
 	}
 	
-	// 如果没有找到特定平台的包，使用第一个资�?	if downloadURL == "" && len(release.Assets) > 0 {
+	// 如果没有找到特定平台的包，使用第一个资源
+	if downloadURL == "" && len(release.Assets) > 0 {
 		downloadURL = release.Assets[0].BrowserDownloadURL
 	}
 	
@@ -2456,7 +2507,8 @@ func (a *App) DownloadUpdate(downloadURL string) (string, error) {
 		return jsonFail("创建下载目录失败: " + err.Error())
 	}
 	
-	// �?URL 提取文件�?	u, err := url.Parse(downloadURL)
+	// 从 URL 提取文件名
+	u, err := url.Parse(downloadURL)
 	if err != nil {
 		return jsonFail("无效的下载地址: " + err.Error())
 	}
@@ -2468,7 +2520,7 @@ func (a *App) DownloadUpdate(downloadURL string) (string, error) {
 	
 	localPath := filepath.Join(downloadDir, fileName)
 	
-	runtime.LogInfo(a.ctx, fmt.Sprintf("开始下载更�? %s -> %s", downloadURL, localPath))
+	runtime.LogInfo(a.ctx, fmt.Sprintf("开始下载更新: %s -> %s", downloadURL, localPath))
 	
 	client := &http.Client{
 		Timeout: 300 * time.Second, // 5分钟超时
@@ -2519,8 +2571,9 @@ func (a *App) InstallUpdate(installerPath string) (string, error) {
 		return jsonFail("安装程序路径为空")
 	}
 	
-	// 检查文件是否存�?	if _, err := os.Stat(installerPath); os.IsNotExist(err) {
-		return jsonFail("安装程序文件不存�? " + installerPath)
+	// 检查文件是否存在
+	if _, err := os.Stat(installerPath); os.IsNotExist(err) {
+		return jsonFail("安装程序文件不存在: " + installerPath)
 	}
 	
 	runtime.LogInfo(a.ctx, fmt.Sprintf("准备安装更新: %s", installerPath))
@@ -2531,9 +2584,10 @@ func (a *App) InstallUpdate(installerPath string) (string, error) {
 	if goruntime.GOOS == "windows" {
 		// Windows 安装
 		if strings.HasSuffix(strings.ToLower(installerPath), ".msi") {
-			// MSI 安装�?			cmd = exec.Command("msiexec", "/i", installerPath, "/quiet", "/norestart")
+			// MSI 安装包
+			cmd = exec.Command("msiexec", "/i", installerPath, "/quiet", "/norestart")
 		} else {
-			// EXE 安装�?- 使用 /S 静默安装（如果支持）
+			// EXE 安装包 - 使用 /S 静默安装（如果支持）
 			cmd = exec.Command(installerPath, "/S")
 		}
 		message = "安装程序已启动，应用即将关闭"
@@ -2562,32 +2616,34 @@ func (a *App) InstallUpdate(installerPath string) (string, error) {
 			})
 			
 			if appPath == "" || err != nil {
-				return jsonFail("未找�?.app 文件")
+				return jsonFail("未找到 .app 文件")
 			}
 			
-			// 复制�?Applications 目录
+			// 复制到 Applications 目录
 			appsDir := "/Applications"
 			appName := filepath.Base(appPath)
 			targetPath := filepath.Join(appsDir, appName)
 			
-			// 删除旧版�?			os.RemoveAll(targetPath)
+			// 删除旧版本
+			os.RemoveAll(targetPath)
 			
-			// 复制新版�?			cmd = exec.Command("cp", "-R", appPath, targetPath)
-			message = "应用已安装到 /Applications，请手动启动新版�?
+			// 复制新版本
+			cmd = exec.Command("cp", "-R", appPath, targetPath)
+			message = "应用已安装到 /Applications，请手动启动新版本"
 		} else if strings.HasSuffix(installerPath, ".app") {
-			// 直接�?.app 文件
+			// 直接是 .app 文件
 			appsDir := "/Applications"
 			appName := filepath.Base(installerPath)
 			targetPath := filepath.Join(appsDir, appName)
 			
 			os.RemoveAll(targetPath)
 			cmd = exec.Command("cp", "-R", installerPath, targetPath)
-			message = "应用已安装到 /Applications，请手动启动新版�?
+			message = "应用已安装到 /Applications，请手动启动新版本"
 		} else {
-			return jsonFail("不支持的 macOS 安装包格�?)
+			return jsonFail("不支持的 macOS 安装包格式")
 		}
 	} else {
-		return jsonFail("当前系统不支持自动安�?)
+		return jsonFail("当前系统不支持自动安装")
 	}
 	
 	// 执行安装命令
@@ -2598,7 +2654,8 @@ func (a *App) InstallUpdate(installerPath string) (string, error) {
 	
 	runtime.LogInfo(a.ctx, message)
 	
-	// Windows 上延迟关闭，macOS 上立即提�?	if goruntime.GOOS == "windows" {
+	// Windows 上延迟关闭，macOS 上立即提示
+	if goruntime.GOOS == "windows" {
 		go func() {
 			time.Sleep(2 * time.Second)
 			runtime.Quit(a.ctx)
