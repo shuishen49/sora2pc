@@ -25,7 +25,8 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// 搴旂敤鐗堟湰鍙?- 姣忔鍙戝竷鏂扮増鏈椂鏇存柊姝ゅ�?const AppVersion = "0.0.4"
+// 应用版本号 - 每次发布新版本时更新此值
+const AppVersion = "0.0.1"
 
 // GitHub 浠撳簱淇℃伅
 const (
