@@ -80,7 +80,7 @@ const toggleSidebar = () => {
         </div>
       </header>
 
-      <div class="content-body" :class="{ 'fixed-body': activeTab === 'generate' }">
+      <div class="content-body" :class="{ 'fixed-body': activeTab === 'generate', 'tokens-body': activeTab === 'tokens' }">
         <transition name="fade" mode="out-in">
           <div :key="activeTab" class="view-container">
             <TokenManager v-if="activeTab === 'tokens'" />
@@ -387,10 +387,25 @@ const toggleSidebar = () => {
   display: flex;
   flex-direction: column;
 }
+.content-body.tokens-body {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 32px;
+}
+@media (max-width: 768px) {
+  .content-body.tokens-body { padding: 16px; }
+}
+@media (max-width: 480px) {
+  .content-body.tokens-body { padding: 12px; }
+}
 
 .view-container {
   width: 100%;
   min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 .content-body.fixed-body .view-container {
   flex: 1;

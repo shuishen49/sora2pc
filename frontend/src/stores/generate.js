@@ -260,12 +260,35 @@ export const useGenerateStore = defineStore('generate', () => {
              // 有任务：取第一个的 progress（兼容 [] 或 { tasks: [...] }）
              const tasksArr = Array.isArray(list) ? list : (list?.tasks || [])
              const first = tasksArr[0]
-             const pct = first.progress_pct != null ? (first.progress_pct <= 1 ? first.progress_pct * 100 : first.progress_pct) : 0
+             const rawPct = first.progress_pct != null ? first.progress_pct : 0
+             // progress_pct 可能是 0-1 的小数或 0-100 的整数
+             const pct = rawPct <= 1 ? rawPct * 100 : rawPct
              const remoteId = current.remoteTaskId
              if (remoteId && window.go?.main?.App?.UpdateVideoTaskProgress) {
                  window.go.main.App.UpdateVideoTaskProgress(remoteId, pct).catch(() => {})
              }
              updateTask(taskId, { progress: pct, message: `pending 进度 ${pct.toFixed(0)}%` })
+             
+             // 如果进度达到 100%（progress_pct >= 1 或 >= 100），停止轮询并去草稿箱拉取
+             if (rawPct >= 1 || pct >= 100) {
+                 const id = pendingIntervals.get(taskId)
+                 if (id != null) clearInterval(id)
+                 pendingIntervals.delete(taskId)
+                 updateTask(taskId, { status: 'done', progress: 100, message: '已完成（progress_pct=100%）' })
+                 addLog(`Task ${taskId} progress_pct=100%，任务完成，去草稿箱拉取`, 'info')
+                 // 去草稿箱拉取结果
+                 if (window.go?.main?.App?.FetchDrafts && window.go?.main?.App?.SaveDraftsAndDownload) {
+                     try {
+                         const draftsBody = await window.go.main.App.FetchDrafts(apiBase, bearer)
+                         const draftsJson = typeof draftsBody === 'string' ? draftsBody : JSON.stringify(draftsBody)
+                         await window.go.main.App.SaveDraftsAndDownload(draftsJson, remoteId)
+                         addLog(`Task ${taskId} 已拉取 drafts 并下载`, 'info')
+                     } catch (e) {
+                         addLog(`Task ${taskId} drafts 拉取/下载失败: ${e?.message || e}`, 'warning')
+                     }
+                 }
+                 return
+             }
          } catch (err) {
              addLog(`Task ${taskId} pending 轮询失败: ${err?.message || err}`, 'warning')
          }
@@ -321,9 +344,31 @@ export const useGenerateStore = defineStore('generate', () => {
              }
              const tasksArr = Array.isArray(list) ? list : (list?.tasks || [])
              const first = tasksArr[0]
-             const pct = first.progress_pct != null ? (first.progress_pct <= 1 ? first.progress_pct * 100 : first.progress_pct) : 0
+             const rawPct = first.progress_pct != null ? first.progress_pct : 0
+             // progress_pct 可能是 0-1 的小数或 0-100 的整数
+             const pct = rawPct <= 1 ? rawPct * 100 : rawPct
              if (window.go?.main?.App?.UpdateVideoTaskProgress) {
                  window.go.main.App.UpdateVideoTaskProgress(remoteTaskId, pct).catch(() => {})
+             }
+             
+             // 如果进度达到 100%（progress_pct >= 1 或 >= 100），停止轮询并去草稿箱拉取
+             if (rawPct >= 1 || pct >= 100) {
+                 const id = pendingIntervals.get(key)
+                 if (id != null) clearInterval(id)
+                 pendingIntervals.delete(key)
+                 addLog(`孤儿任务 ${remoteTaskId} progress_pct=100%，任务完成，去草稿箱拉取`, 'info')
+                 // 去草稿箱拉取结果
+                 if (window.go?.main?.App?.FetchDrafts && window.go?.main?.App?.SaveDraftsAndDownload) {
+                     try {
+                         const draftsBody = await window.go.main.App.FetchDrafts(apiBase, bearer)
+                         const draftsJson = typeof draftsBody === 'string' ? draftsBody : JSON.stringify(draftsBody)
+                         await window.go.main.App.SaveDraftsAndDownload(draftsJson, remoteTaskId)
+                         addLog(`孤儿任务 ${remoteTaskId} 已拉取 drafts 并下载`, 'info')
+                     } catch (e) {
+                         addLog(`孤儿任务 ${remoteTaskId} drafts 拉取/下载失败: ${e?.message || e}`, 'warning')
+                     }
+                 }
+                 return
              }
          } catch (err) {
              addLog(`孤儿任务 ${remoteTaskId} pending 轮询失败: ${err?.message || err}`, 'warning')

@@ -356,8 +356,26 @@ const handleInfo = async (task) => {
 const deleteModalOpen = ref(false)
 const deleteTarget = ref(null)
 
-const deleteTask = (task) => {
-    deleteTarget.value = task || null
+const deleteTask = async (task) => {
+    if (!task) return
+
+    // 失败任务：直接删除记录，不弹确认框
+    if (task.status === 'failed') {
+        const taskId = task.remoteTaskId || task.id
+        if (window.go?.main?.App?.DeleteTaskData && taskId) {
+            try {
+                // 失败任务一般没有本地文件，这里只删除数据记录
+                await window.go.main.App.DeleteTaskData(String(taskId), false)
+            } catch (_) {
+                // 删除失败忽略，依然从前端列表移除，避免列表卡死
+            }
+        }
+        store.removeTask(task.id)
+        return
+    }
+
+    // 其他状态：仍然弹出确认弹窗，让用户选择删除方式
+    deleteTarget.value = task
     deleteModalOpen.value = true
 }
 

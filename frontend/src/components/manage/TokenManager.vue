@@ -422,8 +422,13 @@ const handleDelete = async (id) => {
   if (!confirm('确定要删除这个 Token 吗？')) return
   try {
     await adminStore.removeToken(id)
+    // removeToken 内部已经会刷新列表，这里只需要刷新统计
+    await adminStore.loadStats()
   } catch (e) {
-    alert('删除失败:' + e)
+    console.error('删除失败:', e)
+    alert('删除失败: ' + (e.message || e))
+    // 即使删除失败，也刷新一下列表，确保数据是最新的
+    await adminStore.loadTokens(adminStore.currentPage)
   }
 }
 
@@ -621,7 +626,7 @@ onMounted(() => {
                       <button class="btn-icon-sm" :class="token.isActive ? 'warning' : 'success'" :disabled="token.id < 0" @click="token.id >= 0 && handleToggle(token)" :title="token.isActive ? '禁用' : '启用'">
                           {{ token.isActive ? '⊘' : 'ok' }}
                       </button>
-                      <button class="btn-icon-sm danger" :disabled="token.id < 0" @click="token.id >= 0 && handleDelete(token.id)" title="删除">🗑</button>
+                      <button class="btn-icon-sm danger" :disabled="token.id < 0" @click="() => { if (token.id >= 0) handleDelete(token.id) }" title="删除">🗑</button>
                     </div>
                   </td>
                 </tr>
@@ -796,8 +801,10 @@ onMounted(() => {
   flex-direction: column;
   gap: 24px;
   width: 100%;
+  height: 100%;
   min-width: 0;
   margin: 0 auto;
+  overflow: hidden;
 }
 
 /* Stats (Top) - 响应式列数 */
@@ -857,10 +864,15 @@ onMounted(() => {
   width: 100%;
   min-width: 0;
   overflow: hidden;
+  flex: 1;
+  min-height: 0;
 }
 .main-card > .list-container {
   flex: 1 1 0;
-  min-height: 220px; /* 保证表头+表格区域可见，不能为 0 否则被压扁 */
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Header - 小屏时标题与操作区换行 */
@@ -995,8 +1007,8 @@ onMounted(() => {
   margin: 0;
   width: 100%;
   min-width: 0;
-  min-height: 200px; /* 保证有空间显示表格 */
-  overflow-x: auto;
+  min-height: 0;
+  overflow: hidden;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -1006,16 +1018,19 @@ onMounted(() => {
   border: none;
   width: 100%;
   min-width: 0;
-  min-height: 180px; /* 表格区域至少能显示几行 */
+  min-height: 0;
   overflow-x: auto;
-  overflow-y: visible;
+  overflow-y: auto;
   flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 .table-wrapper table {
   width: 100%;
   min-width: 800px;
   table-layout: auto;
   display: table;
+  flex-shrink: 0;
 }
 table { border-collapse: separate; border-spacing: 0; }
 th { background: rgba(15, 23, 42, 0.3); border-bottom: 1px solid rgba(148, 163, 184, 0.1); padding: 14px 16px; font-weight: 600; font-size: 13px; }
