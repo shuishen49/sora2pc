@@ -1,0 +1,29 @@
+name: Build and Release (local backup, not used by GitHub)
+
+# 说明：
+# - 这一份是原来的 go.yml 逻辑备份
+# - 由于 .github/workflows 目录下的 yml 文件都会被 GitHub 识别为工作流，
+#   所以已经将真正生效的 go.yml 删除，只保留这一份备份文件在本地仓库中。
+# - 如果以后需要重新启用，只需把本文件内容复制到一个新的 yml 文件
+#   （例如 release.yml），并按需调整触发条件即可。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  get-version:
+    name: Get Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Get version from tag
+        id: version
+        run: |
+          echo "version=dev" >> $GITHUB_OUTPUT
+          echo "tag=dev" >> $GITHUB_OUTPUT
+
