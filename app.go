@@ -42,6 +42,14 @@ type App struct {
 	fileServerPort int
 }
 
+func isProPlan(planType string) bool {
+	planType = strings.ToLower(strings.TrimSpace(planType))
+	if planType == "" {
+		return false
+	}
+	return strings.Contains(planType, "pro")
+}
+
 // Config 用于当 SQLite 不可用时的文件配置回退
 type Config struct {
 	BaseURL string `json:"base_url"`
@@ -963,10 +971,11 @@ func (a *App) localTokenSetActive(id int64, active bool) (string, error) {
 }
 
 // GetRandomVideoToken 从数据库随机返回一个可用于视频生成的 token：状态正常、已启用视频、有剩余次数
+// requirePro=true 时仅允许 Pro/Plus 账号
 // 返回 JSON：{"bearer_token": "xxx", "token_id": 123} 或 {"error": "..."}
-func (a *App) GetRandomVideoToken() (string, error) {
+func (a *App) GetRandomVideoToken(requirePro bool) (string, error) {
 	rows, err := a.db.Query(
-		`SELECT id, token, status_json FROM tokens WHERE is_active=1 AND video_enabled=1`)
+		`SELECT id, token, status_json, plan_type FROM tokens WHERE is_active=1 AND video_enabled=1`)
 	if err != nil {
 		return jsonMarshal(map[string]interface{}{"error": "查询 Token 失败: " + err.Error()})
 	}
@@ -976,16 +985,21 @@ func (a *App) GetRandomVideoToken() (string, error) {
 		id         int64
 		token      string
 		statusJSON sql.NullString
+		planType   sql.NullString
 	}
 	var candidates []tokenRow
 	for rows.Next() {
 		var id int64
 		var token string
 		var statusJSON sql.NullString
-		if err := rows.Scan(&id, &token, &statusJSON); err != nil {
+		var planType sql.NullString
+		if err := rows.Scan(&id, &token, &statusJSON, &planType); err != nil {
 			continue
 		}
 		if strings.TrimSpace(token) == "" {
+			continue
+		}
+		if requirePro && (!planType.Valid || !isProPlan(planType.String)) {
 			continue
 		}
 		remaining := -1
@@ -1001,10 +1015,13 @@ func (a *App) GetRandomVideoToken() (string, error) {
 		}
 		// 无 status 时也加入候选（由上游判断）；有 status 时要求剩余次数 > 0
 		if remaining < 0 || remaining > 0 {
-			candidates = append(candidates, tokenRow{id: id, token: token, statusJSON: statusJSON})
+			candidates = append(candidates, tokenRow{id: id, token: token, statusJSON: statusJSON, planType: planType})
 		}
 	}
 	if len(candidates) == 0 {
+		if requirePro {
+			return jsonMarshal(map[string]interface{}{"error": "无可用 Pro Token（需状态正常、已启用视频且有剩余次数）"})
+		}
 		return jsonMarshal(map[string]interface{}{"error": "无可用 Token（需状态正常、已启用视频且有剩余次数）"})
 	}
 	idx := rand.Intn(len(candidates))
@@ -1025,10 +1042,29 @@ func (a *App) GetBearerByTokenID(tokenId int64) (string, error) {
 	return jsonMarshal(map[string]interface{}{"bearer_token": bearer})
 }
 
+// GetTokenEmailByID 根据 token_id 读取该账号邮箱（来自 status_json）
+// 返回 JSON：{"email": "xxx"} 或 {"error": "..."}
+func (a *App) GetTokenEmailByID(tokenId int64) (string, error) {
+	var statusJSON sql.NullString
+	if err := a.db.QueryRow(`SELECT status_json FROM tokens WHERE id=?`, tokenId).Scan(&statusJSON); err != nil {
+		return jsonMarshal(map[string]interface{}{"error": "Token 不存在或已删除"})
+	}
+	if !statusJSON.Valid || statusJSON.String == "" {
+		return jsonMarshal(map[string]interface{}{"error": "未找到邮箱"})
+	}
+	var status struct {
+		Email string `json:"email"`
+	}
+	if err := json.Unmarshal([]byte(statusJSON.String), &status); err != nil || status.Email == "" {
+		return jsonMarshal(map[string]interface{}{"error": "未找到邮箱"})
+	}
+	return jsonMarshal(map[string]interface{}{"email": status.Email})
+}
+
 // CreateVideo 调用与 testsh/create.sh 相同的接口：POST {apiBaseURL}/videos，请求体为 bearer_token、prompt、orientation、size、n_frames、model
 // 用于「立即生成」视频任务，并在控制台打印 CREATE 请求/响应
-// orientation: portrait / landscape；nFrames: 300(10s) / 450(15s)
-func (a *App) CreateVideo(apiBaseURL string, bearerToken string, prompt string, orientation string, nFrames string) (string, error) {
+// orientation: portrait / landscape；nFrames: 300(10s) / 450(15s) / 750(25s)
+func (a *App) CreateVideo(apiBaseURL string, bearerToken string, prompt string, orientation string, nFrames string, model string, size string) (string, error) {
 	apiBaseURL = strings.TrimRight(apiBaseURL, "/")
 	videoURL := apiBaseURL + "/videos"
 	nFramesInt := 300
@@ -1040,13 +1076,19 @@ func (a *App) CreateVideo(apiBaseURL string, bearerToken string, prompt string, 
 	if orientation == "" {
 		orientation = "portrait"
 	}
+	if strings.TrimSpace(model) == "" {
+		model = "sy_8"
+	}
+	if strings.TrimSpace(size) == "" {
+		size = "small"
+	}
 	body := map[string]interface{}{
 		"bearer_token": bearerToken,
 		"prompt":       prompt,
 		"orientation": orientation,
-		"size":         "small",
+		"size":         size,
 		"n_frames":     nFramesInt,
-		"model":        "sy_8",
+		"model":        model,
 	}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
@@ -1055,7 +1097,7 @@ func (a *App) CreateVideo(apiBaseURL string, bearerToken string, prompt string, 
 
 	runtime.LogInfo(a.ctx, "========== CREATE 请求 (POST /videos) ==========")
 	runtime.LogInfo(a.ctx, "  "+videoURL)
-	runtime.LogInfo(a.ctx, "  prompt="+prompt+" orientation="+orientation+" n_frames="+strconv.Itoa(nFramesInt))
+	runtime.LogInfo(a.ctx, "  prompt="+prompt+" orientation="+orientation+" n_frames="+strconv.Itoa(nFramesInt)+" model="+model+" size="+size)
 	runtime.LogInfo(a.ctx, "----------------------------------------")
 
 	req, err := http.NewRequest(http.MethodPost, videoURL, bytes.NewReader(bodyBytes))

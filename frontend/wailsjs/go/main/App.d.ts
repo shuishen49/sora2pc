@@ -16,7 +16,7 @@ export function CheckForUpdates():Promise<string>;
 
 export function ClearVideoDownloads():Promise<string>;
 
-export function CreateVideo(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<string>;
+export function CreateVideo(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string):Promise<string>;
 
 export function DeleteTaskData(arg1:string,arg2:boolean):Promise<string>;
 
@@ -36,9 +36,11 @@ export function GetLocalFileDataURL(arg1:string):Promise<string>;
 
 export function GetLocalFileURL(arg1:string):Promise<string>;
 
-export function GetRandomVideoToken():Promise<string>;
+export function GetRandomVideoToken(arg1:boolean):Promise<string>;
 
 export function GetTaskList():Promise<string>;
+
+export function GetTokenEmailByID(arg1:number):Promise<string>;
 
 export function GetTokenIDByRemoteTaskID(arg1:string):Promise<string>;
 

@@ -13,6 +13,89 @@ const fileToDataUrl = (file) => {
   })
 }
 
+const isTokenInvalidatedError = (err) => {
+  const msg = (err && err.message) ? err.message : String(err || '')
+  return msg.includes('token_invalidated') || msg.includes('Please try signing in again') || msg.includes('signing in again')
+}
+
+const getErrorMessage = (payload) => {
+  if (!payload) return ''
+  if (typeof payload === 'string') return payload
+  if (payload.error) {
+    if (typeof payload.error === 'string') return payload.error
+    if (payload.error.message) return payload.error.message
+  }
+  return ''
+}
+
+const parsePendingBody = (body) => {
+  const rawText = typeof body === 'string' ? body : JSON.stringify(body)
+  if (typeof body !== 'string') return { rawText, parsed: body }
+  try {
+    return { rawText, parsed: JSON.parse(body) }
+  } catch {
+    return { rawText, parsed: null }
+  }
+}
+
+const getTokenEmailById = async (tokenId) => {
+  if (tokenId == null || !window.go?.main?.App?.GetTokenEmailByID) return ''
+  try {
+    const res = await window.go.main.App.GetTokenEmailByID(tokenId)
+    const data = typeof res === 'string' ? JSON.parse(res) : res
+    return data?.email || ''
+  } catch {
+    return ''
+  }
+}
+
+// 统一的 token 失效处理函数
+const handleTokenInvalidated = async (tokenId, intervalKey, pendingIntervals, updateTaskFn, taskIdOrRemoteId, addLogFn, isOrphan = false) => {
+  const email = await getTokenEmailById(tokenId)
+  const who = email ? `${email}` : (tokenId != null ? `token_id=${tokenId}` : '未知账号')
+  const message = `账号失效（${who}），停止 pending`
+  const logPrefix = isOrphan ? `孤儿任务 ${taskIdOrRemoteId}` : `Task ${taskIdOrRemoteId}`
+  if (addLogFn) {
+    addLogFn(`${logPrefix} pending 失败: ${message}`, 'warning')
+  } else {
+    console.log(`${logPrefix} pending 失败: ${message}`)
+  }
+  
+  const id = pendingIntervals.get(intervalKey)
+  if (id != null) clearInterval(id)
+  pendingIntervals.delete(intervalKey)
+  
+  if (updateTaskFn && !isOrphan) {
+    updateTaskFn(taskIdOrRemoteId, { status: 'failed', message })
+  }
+  
+  return { stopped: true, message }
+}
+
+const getVideoRequestParams = (modelValue) => {
+  const orientation = modelValue.includes('portrait') ? 'portrait' : 'landscape'
+  let nFrames = '300'
+  if (modelValue.includes('25s')) nFrames = '750'
+  else if (modelValue.includes('15s')) nFrames = '450'
+
+  let soraModel = 'sy_8'
+  let size = 'small'
+  let requirePro = false
+  if (modelValue.startsWith('sora2pro-hd-')) {
+    soraModel = 'sy_ore'
+    size = 'large'
+    requirePro = true
+  } else if (modelValue.startsWith('sora2pro-')) {
+    soraModel = 'sy_ore'
+    size = 'small'
+    requirePro = true
+  } else if (modelValue.includes('25s')) {
+    requirePro = true
+  }
+
+  return { orientation, nFrames, soraModel, size, requirePro }
+}
+
 
 
 export const useGenerateStore = defineStore('generate', () => {
@@ -61,12 +144,28 @@ export const useGenerateStore = defineStore('generate', () => {
   }
 
   // ========== Models ==========
-  // 暂只做普通视频（标准版）10s 和 15s
   const models = [
+    { value: 'sora2-landscape-25s', label: '横屏视频 25s', group: '标准版视频' },
     { value: 'sora2-landscape-15s', label: '横屏视频 15s', group: '标准版视频' },
     { value: 'sora2-landscape-10s', label: '横屏视频 10s', group: '标准版视频' },
+    { value: 'sora2-portrait-25s', label: '竖屏视频 25s', group: '标准版视频' },
     { value: 'sora2-portrait-15s', label: '竖屏视频 15s', group: '标准版视频' },
     { value: 'sora2-portrait-10s', label: '竖屏视频 10s', group: '标准版视频' },
+
+    { value: 'sora2pro-landscape-25s', label: '横屏视频 25s (Pro)', group: 'Pro版视频' },
+    { value: 'sora2pro-landscape-15s', label: '横屏视频 15s (Pro)', group: 'Pro版视频' },
+    { value: 'sora2pro-landscape-10s', label: '横屏视频 10s (Pro)', group: 'Pro版视频' },
+    { value: 'sora2pro-portrait-25s', label: '竖屏视频 25s (Pro)', group: 'Pro版视频' },
+    { value: 'sora2pro-portrait-15s', label: '竖屏视频 15s (Pro)', group: 'Pro版视频' },
+    { value: 'sora2pro-portrait-10s', label: '竖屏视频 10s (Pro)', group: 'Pro版视频' },
+
+    { value: 'sora2pro-hd-landscape-25s', label: '横屏视频 25s (Pro HD)', group: 'Pro HD版视频' },
+    { value: 'sora2pro-hd-landscape-15s', label: '横屏视频 15s (Pro HD)', group: 'Pro HD版视频' },
+    { value: 'sora2pro-hd-landscape-10s', label: '横屏视频 10s (Pro HD)', group: 'Pro HD版视频' },
+    { value: 'sora2pro-hd-portrait-25s', label: '竖屏视频 25s (Pro HD)', group: 'Pro HD版视频' },
+    { value: 'sora2pro-hd-portrait-15s', label: '竖屏视频 15s (Pro HD)', group: 'Pro HD版视频' },
+    { value: 'sora2pro-hd-portrait-10s', label: '竖屏视频 10s (Pro HD)', group: 'Pro HD版视频' },
+
     { value: 'gpt-image', label: '方图 360×360', group: '图片' },
     { value: 'gpt-image-landscape', label: '横图 540×360', group: '图片' },
     { value: 'gpt-image-portrait', label: '竖图 360×540', group: '图片' },
@@ -226,24 +325,27 @@ export const useGenerateStore = defineStore('generate', () => {
                  return
              }
              const body = await window.go.main.App.PollPending(apiBase, bearer)
-             const list = typeof body === 'string' ? JSON.parse(body) : body
+            const { rawText, parsed } = parsePendingBody(body)
+            const pendingErr = getErrorMessage(parsed)
+            if ((pendingErr && isTokenInvalidatedError(pendingErr)) || isTokenInvalidatedError(rawText)) {
+                await handleTokenInvalidated(tokenId, taskId, pendingIntervals, updateTask, taskId, addLog, false)
+                return
+            }
+            const list = parsed ?? {}
+            const tasksArr = Array.isArray(list) ? list : (list?.tasks || [])
+            const remoteId = current.remoteTaskId
+            const matched = remoteId ? tasksArr.find(t => t?.id === remoteId || t?.task_id === remoteId) : null
 
-             // 如何知道「继续 pending」还是「已完成」：完全由 pending 接口的返回决定
-             // - 有任务：返回非空列表（如 [{ id, progress_pct, status, ... }] 或 { tasks: [...] }）→ 继续轮询，用 progress_pct 更新进度
-             // - 已完成：返回空列表（[] 或 { raw: [], tasks: [] }）→ 该账号下没有 pending 任务，说明视频已生成完毕，停止轮询并执行 drafts
-             const isEmpty = Array.isArray(list)
-                 ? list.length === 0
-                 : (list && Array.isArray(list.tasks) && list.tasks.length === 0)
-             if (isEmpty) {
+            // 如果 pending 中不存在该任务（即已完成/消失），才去拉取 drafts
+            if (!matched) {
                  const id = pendingIntervals.get(taskId)
                  if (id != null) clearInterval(id)
                  pendingIntervals.delete(taskId)
-                 const remoteId = current.remoteTaskId
                  if (remoteId && window.go?.main?.App?.UpdateVideoTaskProgress) {
                      window.go.main.App.UpdateVideoTaskProgress(remoteId, 100).catch(() => {})
                  }
-                 updateTask(taskId, { status: 'done', progress: 100, message: '已完成（pending 返回 []）' })
-                 addLog(`Task ${taskId} pending 返回 []，任务完成`, 'info')
+                updateTask(taskId, { status: 'done', progress: 100, message: '已完成（pending 中不存在该任务）' })
+                addLog(`Task ${taskId} pending 中不存在该任务，转入 drafts`, 'info')
                  // pending 返回空后执行 drafts，仅下载该 task_id 对应的那条
                  if (window.go?.main?.App?.FetchDrafts && window.go?.main?.App?.SaveDraftsAndDownload) {
                      try {
@@ -257,24 +359,21 @@ export const useGenerateStore = defineStore('generate', () => {
                  }
                  return
              }
-             // 有任务：取第一个的 progress（兼容 [] 或 { tasks: [...] }）
-             const tasksArr = Array.isArray(list) ? list : (list?.tasks || [])
-             const first = tasksArr[0]
-             const rawPct = first.progress_pct != null ? first.progress_pct : 0
+            // 有任务：取当前任务的 progress
+            const rawPct = matched.progress_pct != null ? matched.progress_pct : 0
              // progress_pct 可能是 0-1 的小数或 0-100 的整数
              const pct = rawPct <= 1 ? rawPct * 100 : rawPct
-             const remoteId = current.remoteTaskId
              if (remoteId && window.go?.main?.App?.UpdateVideoTaskProgress) {
                  window.go.main.App.UpdateVideoTaskProgress(remoteId, pct).catch(() => {})
              }
              updateTask(taskId, { progress: pct, message: `pending 进度 ${pct.toFixed(0)}%` })
              
              // 如果进度达到 100%（progress_pct >= 1 或 >= 100），停止轮询并去草稿箱拉取
-             if (rawPct >= 1 || pct >= 100) {
+            if (rawPct >= 1 || pct >= 100) {
                  const id = pendingIntervals.get(taskId)
                  if (id != null) clearInterval(id)
                  pendingIntervals.delete(taskId)
-                 updateTask(taskId, { status: 'done', progress: 100, message: '已完成（progress_pct=100%）' })
+                updateTask(taskId, { status: 'done', progress: 100, message: '已完成（progress_pct=100%）' })
                  addLog(`Task ${taskId} progress_pct=100%，任务完成，去草稿箱拉取`, 'info')
                  // 去草稿箱拉取结果
                  if (window.go?.main?.App?.FetchDrafts && window.go?.main?.App?.SaveDraftsAndDownload) {
@@ -289,9 +388,14 @@ export const useGenerateStore = defineStore('generate', () => {
                  }
                  return
              }
-         } catch (err) {
-             addLog(`Task ${taskId} pending 轮询失败: ${err?.message || err}`, 'warning')
-         }
+        } catch (err) {
+            const errStr = String(err?.message || err || '')
+            if (isTokenInvalidatedError(errStr)) {
+                await handleTokenInvalidated(tokenId, taskId, pendingIntervals, updateTask, taskId, addLog, false)
+                return
+            }
+            addLog(`Task ${taskId} pending 轮询失败: ${err?.message || err}`, 'warning')
+        }
      }
      tick()
      pendingIntervals.set(taskId, setInterval(tick, POLL_INTERVAL_MS))
@@ -319,18 +423,23 @@ export const useGenerateStore = defineStore('generate', () => {
                  return
              }
              const body = await window.go.main.App.PollPending(apiBase, bearer)
-             const list = typeof body === 'string' ? JSON.parse(body) : body
-             const isEmpty = Array.isArray(list)
-                 ? list.length === 0
-                 : (list && Array.isArray(list.tasks) && list.tasks.length === 0)
-             if (isEmpty) {
+            const { rawText, parsed } = parsePendingBody(body)
+            const pendingErr = getErrorMessage(parsed)
+            if ((pendingErr && isTokenInvalidatedError(pendingErr)) || isTokenInvalidatedError(rawText)) {
+                await handleTokenInvalidated(tokenId, key, pendingIntervals, null, remoteTaskId, addLog, true)
+                return
+            }
+            const list = parsed ?? {}
+            const tasksArr = Array.isArray(list) ? list : (list?.tasks || [])
+            const matched = tasksArr.find(t => t?.id === remoteTaskId || t?.task_id === remoteTaskId)
+            if (!matched) {
                  const id = pendingIntervals.get(key)
                  if (id != null) clearInterval(id)
                  pendingIntervals.delete(key)
                  if (window.go?.main?.App?.UpdateVideoTaskProgress) {
                      window.go.main.App.UpdateVideoTaskProgress(remoteTaskId, 100).catch(() => {})
                  }
-                 addLog(`孤儿任务 ${remoteTaskId} pending 完成，拉取 drafts`, 'info')
+                addLog(`孤儿任务 ${remoteTaskId} pending 中不存在，拉取 drafts`, 'info')
                  if (window.go?.main?.App?.FetchDrafts && window.go?.main?.App?.SaveDraftsAndDownload) {
                      try {
                          const draftsBody = await window.go.main.App.FetchDrafts(apiBase, bearer)
@@ -342,9 +451,7 @@ export const useGenerateStore = defineStore('generate', () => {
                  }
                  return
              }
-             const tasksArr = Array.isArray(list) ? list : (list?.tasks || [])
-             const first = tasksArr[0]
-             const rawPct = first.progress_pct != null ? first.progress_pct : 0
+            const rawPct = matched.progress_pct != null ? matched.progress_pct : 0
              // progress_pct 可能是 0-1 的小数或 0-100 的整数
              const pct = rawPct <= 1 ? rawPct * 100 : rawPct
              if (window.go?.main?.App?.UpdateVideoTaskProgress) {
@@ -370,9 +477,14 @@ export const useGenerateStore = defineStore('generate', () => {
                  }
                  return
              }
-         } catch (err) {
-             addLog(`孤儿任务 ${remoteTaskId} pending 轮询失败: ${err?.message || err}`, 'warning')
-         }
+        } catch (err) {
+            const errStr = String(err?.message || err || '')
+            if (isTokenInvalidatedError(errStr)) {
+                await handleTokenInvalidated(tokenId, key, pendingIntervals, null, remoteTaskId, addLog, true)
+                return
+            }
+            addLog(`孤儿任务 ${remoteTaskId} pending 轮询失败: ${err?.message || err}`, 'warning')
+        }
      }
      tick()
      pendingIntervals.set(key, setInterval(tick, POLL_INTERVAL_MS))
@@ -420,6 +532,15 @@ export const useGenerateStore = defineStore('generate', () => {
                  addLog(`[pending] ${remoteTaskId} 继续 pending（孤儿任务，无本地条目）`, 'info')
                  startOrphanPending(remoteTaskId, tokenId)
              }
+         }
+         // 本地任务存在但 SQLite 未记录未完成（progress_pct>=100 或缺失）时，也继续 pending
+         for (const t of tasks.value) {
+             if (!t || !t.remoteTaskId) continue
+             if (t.status === 'failed') continue
+             if (t.url) continue
+             if (pendingIntervals.has(t.id)) continue
+             addLog(`[pending] ${t.remoteTaskId} 本地任务补充继续 pending（无下载）`, 'info')
+             startPendingInterval(t.id)
          }
      } catch (e) {
          addLog('恢复 pending 失败: ' + (e?.message || e), 'warning')
@@ -482,9 +603,10 @@ export const useGenerateStore = defineStore('generate', () => {
      // 视频任务：从数据库随机取一个状态正常、有剩余次数的 token 作为 bearer，并记下 token_id 供收到 create 结果时写入 SQLite
      let bearerForRequest = apiKey.value
      let videoTokenId = null
-     if (typeof t.model === 'string' && t.model.startsWith('sora2-') && window.go?.main?.App?.GetRandomVideoToken) {
+    if (typeof t.model === 'string' && t.model.startsWith('sora2-') && window.go?.main?.App?.GetRandomVideoToken) {
          try {
-             const res = await window.go.main.App.GetRandomVideoToken()
+            const { requirePro } = getVideoRequestParams(t.model)
+            const res = await window.go.main.App.GetRandomVideoToken(requirePro)
              const data = typeof res === 'string' ? JSON.parse(res) : res
              if (data?.error) {
                  updateTask(taskId, { status: 'failed', message: data.error })
@@ -506,12 +628,19 @@ export const useGenerateStore = defineStore('generate', () => {
      const isVideoTask = typeof t.model === 'string' && t.model.startsWith('sora2-')
 
      try {
-         if (isVideoTask && window.go?.main?.App?.CreateVideo) {
-             // 视频任务：调用与 testsh/create.sh 相同的接口 POST /videos（由 Go 发起，控制台打 CREATE 请求/响应）
-             const orientation = t.model.includes('portrait') ? 'portrait' : 'landscape'
-             const nFrames = t.model.includes('15s') ? '450' : '300'
-             const apiBase = baseUrl.value.replace(/\/$/, '')
-             const res = await window.go.main.App.CreateVideo(apiBase, bearerForRequest, finalPrompt, orientation, nFrames)
+        if (isVideoTask && window.go?.main?.App?.CreateVideo) {
+            // 视频任务：调用与 testsh/create.sh 相同的接口 POST /videos（由 Go 发起，控制台打 CREATE 请求/响应）
+            const { orientation, nFrames, soraModel, size } = getVideoRequestParams(t.model)
+            const apiBase = baseUrl.value.replace(/\/$/, '')
+            const res = await window.go.main.App.CreateVideo(
+                apiBase,
+                bearerForRequest,
+                finalPrompt,
+                orientation,
+                nFrames,
+                soraModel,
+                size
+            )
              const data = typeof res === 'string' ? JSON.parse(res) : res
              const taskIdRemote = data?.id || data?.task_id
              if (taskIdRemote) {

@@ -30,8 +30,8 @@ export function ClearVideoDownloads() {
   return window['go']['main']['App']['ClearVideoDownloads']();
 }
 
-export function CreateVideo(arg1, arg2, arg3, arg4, arg5) {
-  return window['go']['main']['App']['CreateVideo'](arg1, arg2, arg3, arg4, arg5);
+export function CreateVideo(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['main']['App']['CreateVideo'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
 export function DeleteTaskData(arg1, arg2) {
@@ -70,12 +70,16 @@ export function GetLocalFileURL(arg1) {
   return window['go']['main']['App']['GetLocalFileURL'](arg1);
 }
 
-export function GetRandomVideoToken() {
-  return window['go']['main']['App']['GetRandomVideoToken']();
+export function GetRandomVideoToken(arg1) {
+  return window['go']['main']['App']['GetRandomVideoToken'](arg1);
 }
 
 export function GetTaskList() {
   return window['go']['main']['App']['GetTaskList']();
+}
+
+export function GetTokenEmailByID(arg1) {
+  return window['go']['main']['App']['GetTokenEmailByID'](arg1);
 }
 
 export function GetTokenIDByRemoteTaskID(arg1) {
