@@ -26,7 +26,7 @@ import (
 )
 
 // 应用版本号 - 每次发布新版本时更新此值
-const AppVersion = "0.0.6"
+const AppVersion = "0.0.7"
 
 // GitHub 仓库信息
 const (
