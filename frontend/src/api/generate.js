@@ -2,6 +2,18 @@
 export async function streamCompletion(payload, apiKey, baseUrl, { onMessage, onFinish, onError, signal }) {
   const url = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`
 
+  // 打印请求信息到控制台
+  console.log('========== 创建视频请求 (POST /v1/chat/completions) ==========')
+  console.log('URL:', url)
+  console.log('Method: POST')
+  console.log('Headers:', {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${apiKey ? apiKey.substring(0, 20) + '...' : '(empty)'}`,
+    'Accept': 'text/event-stream'
+  })
+  console.log('Payload:', JSON.stringify(payload, null, 2))
+  console.log('----------------------------------------')
+
   try {
     const response = await fetch(url, {
       method: 'POST',
@@ -14,8 +26,17 @@ export async function streamCompletion(payload, apiKey, baseUrl, { onMessage, on
       signal
     })
 
+    console.log('========== 创建视频响应 ==========')
+    console.log('Status:', response.status, response.statusText)
+    console.log('Headers:', Object.fromEntries(response.headers.entries()))
+    console.log('=======================================')
+
     if (!response.ok) {
         const text = await response.text()
+        console.error('========== 创建视频响应错误 ==========')
+        console.error('Status:', response.status, response.statusText)
+        console.error('Response body:', text)
+        console.error('=======================================')
         let errorMsg = `HTTP ${response.status}`
         try {
             const json = JSON.parse(text)
@@ -67,6 +88,12 @@ export async function streamCompletion(payload, apiKey, baseUrl, { onMessage, on
     if (onFinish) onFinish()
 
   } catch (err) {
+    console.error('========== 创建视频请求异常 ==========')
+    console.error('Error:', err)
+    console.error('Error name:', err.name)
+    console.error('Error message:', err.message)
+    console.error('Error stack:', err.stack)
+    console.error('=======================================')
     if (onError) onError(err)
     else throw err
   }

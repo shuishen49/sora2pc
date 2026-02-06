@@ -617,7 +617,10 @@ onMounted(() => {
                   </td>
                   <td class="text-center">{{ token.imageCount ?? 0 }}</td>
                   <td class="text-center">{{ token.videoCount ?? 0 }}</td>
-                  <td class="text-center text-red">{{ token.errorCount ?? 0 }}</td>
+                  <td class="text-center text-red">
+                    <span v-if="token.errorMessage" class="truncate max-w-[140px] inline-block" :title="token.errorMessage">{{ token.errorMessage }}</span>
+                    <span v-else>{{ token.errorCount ?? 0 }}</span>
+                  </td>
                   <td class="text-xs text-muted truncate max-w-[100px]" :title="token.remark">{{ token.remark || '-' }}</td>
                   <td>
                     <div class="actions justify-end">

@@ -135,6 +135,7 @@ CREATE TABLE IF NOT EXISTS tokens (
 	video_concurrency INTEGER DEFAULT 3,
 	status_json TEXT,
 	plan_type TEXT,
+	error_message TEXT DEFAULT '',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -142,10 +143,11 @@ CREATE TABLE IF NOT EXISTS tokens (
 CREATE TABLE IF NOT EXISTS video_task_results (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	task_id TEXT UNIQUE NOT NULL,
-	token_id INTEGER NOT NULL,
+	token_id INTEGER,
 	result_json TEXT,
 	progress_pct REAL DEFAULT 0,
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	prompt TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS video_downloads (
@@ -174,10 +176,13 @@ CREATE TABLE IF NOT EXISTS task_list (
 	}
 	// 兼容旧库：若无 plan_type 列则添加（忽略已存在错误）
 	_, _ = db.Exec("ALTER TABLE tokens ADD COLUMN plan_type TEXT DEFAULT ''")
+	_, _ = db.Exec("ALTER TABLE tokens ADD COLUMN error_message TEXT DEFAULT ''")
 	// 兼容旧库：video_task_results 若无 progress_pct 则添加
 	_, _ = db.Exec("ALTER TABLE video_task_results ADD COLUMN progress_pct REAL DEFAULT 0")
 	// 兼容旧库：video_task_results 若无 prompt 列则添加
 	_, _ = db.Exec("ALTER TABLE video_task_results ADD COLUMN prompt TEXT DEFAULT ''")
+	// 兼容旧库：video_task_results 若无 token_id 列则添加（允许 NULL，因为旧数据可能没有）
+	_, _ = db.Exec("ALTER TABLE video_task_results ADD COLUMN token_id INTEGER")
 	// 兼容旧库：video_downloads 若无 post_id 列则添加
 	_, _ = db.Exec("ALTER TABLE video_downloads ADD COLUMN post_id TEXT DEFAULT ''")
 
@@ -744,7 +749,7 @@ func (a *App) localTokensList(rawPath string) (string, error) {
 	}
 
 	rows, err := a.db.Query(
-		`SELECT id, token, st, rt, client_id, is_active, remark, proxy_url, image_enabled, video_enabled, image_concurrency, video_concurrency, status_json, plan_type, created_at FROM tokens ORDER BY id LIMIT ? OFFSET ?`,
+		`SELECT id, token, st, rt, client_id, is_active, remark, proxy_url, image_enabled, video_enabled, image_concurrency, video_concurrency, status_json, plan_type, error_message, created_at FROM tokens ORDER BY id LIMIT ? OFFSET ?`,
 		limit, offset)
 	if err != nil {
 		return jsonFail("查询列表失败: " + err.Error())
@@ -754,10 +759,10 @@ func (a *App) localTokensList(rawPath string) (string, error) {
 	list := []map[string]interface{}{}
 	for rows.Next() {
 		var id int64
-		var token, st, rt, clientID, remark, proxyURL, statusJSON, planType, createdAt sql.NullString
+		var token, st, rt, clientID, remark, proxyURL, statusJSON, planType, errorMessage, createdAt sql.NullString
 		var isActive, imageEnabled, videoEnabled int
 		var imageConcurrency, videoConcurrency int
-		if err := rows.Scan(&id, &token, &st, &rt, &clientID, &isActive, &remark, &proxyURL, &imageEnabled, &videoEnabled, &imageConcurrency, &videoConcurrency, &statusJSON, &planType, &createdAt); err != nil {
+		if err := rows.Scan(&id, &token, &st, &rt, &clientID, &isActive, &remark, &proxyURL, &imageEnabled, &videoEnabled, &imageConcurrency, &videoConcurrency, &statusJSON, &planType, &errorMessage, &createdAt); err != nil {
 			continue
 		}
 		email := ""
@@ -799,6 +804,7 @@ func (a *App) localTokensList(rawPath string) (string, error) {
 			"email":                   email,
 			"is_expired":              false,
 			"plan_type":               planTypeStr,
+			"error_message":           errorMessage.String,
 			"sora2_remaining_count":   remainingCount,
 			"sora2_total_count":       0,
 			"access_resets_in_seconds": resetInSeconds,
@@ -942,7 +948,7 @@ func (a *App) localTokenTest(id int64) (string, error) {
 	var status map[string]interface{}
 	_ = json.Unmarshal([]byte(respBody), &status)
 	statusJSON, _ := json.Marshal(status)
-	_, _ = a.db.Exec(`UPDATE tokens SET status_json=?, updated_at=? WHERE id=?`, string(statusJSON), time.Now(), id)
+	_, _ = a.db.Exec(`UPDATE tokens SET status_json=?, error_message=?, updated_at=? WHERE id=?`, string(statusJSON), "", time.Now(), id)
 	email, _ := status["email"].(string)
 	// 请求 /account/subscriptions 更新 plan_type（free/plus 等）
 	if subBody, err := a.AccountSubscriptions(bearer); err == nil {
@@ -1059,6 +1065,31 @@ func (a *App) GetTokenEmailByID(tokenId int64) (string, error) {
 		return jsonMarshal(map[string]interface{}{"error": "未找到邮箱"})
 	}
 	return jsonMarshal(map[string]interface{}{"email": status.Email})
+}
+
+// SetTokenError 根据 token_id 保存错误信息（用于前端标记账号失效等问题）
+// 如果错误信息包含"账号失效"，同时禁用该 token
+// 返回 JSON：{"success": true} 或 {"error": "..."}
+func (a *App) SetTokenError(tokenId int64, message string) (string, error) {
+	if a.db == nil {
+		return jsonMarshal(map[string]interface{}{"error": "SQLite 未初始化"})
+	}
+	msg := strings.TrimSpace(message)
+	if tokenId <= 0 {
+		return jsonMarshal(map[string]interface{}{"error": "无效的 token_id"})
+	}
+	if _, err := a.db.Exec(`UPDATE tokens SET error_message=?, updated_at=? WHERE id=?`, msg, time.Now(), tokenId); err != nil {
+		return jsonMarshal(map[string]interface{}{"error": "保存错误信息失败: " + err.Error()})
+	}
+	// 如果错误信息包含"账号失效"，同时禁用该 token
+	if strings.Contains(msg, "账号失效") {
+		if _, err := a.db.Exec(`UPDATE tokens SET is_active=0, updated_at=? WHERE id=?`, time.Now(), tokenId); err != nil {
+			runtime.LogError(a.ctx, fmt.Sprintf("禁用 token %d 失败: %v", tokenId, err))
+		} else {
+			runtime.LogInfo(a.ctx, fmt.Sprintf("已禁用失效的 token %d", tokenId))
+		}
+	}
+	return jsonMarshal(map[string]interface{}{"success": true})
 }
 
 // CreateVideo 调用与 testsh/create.sh 相同的接口：POST {apiBaseURL}/videos，请求体为 bearer_token、prompt、orientation、size、n_frames、model

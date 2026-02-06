@@ -24,8 +24,66 @@ const getErrorMessage = (payload) => {
   if (payload.error) {
     if (typeof payload.error === 'string') return payload.error
     if (payload.error.message) return payload.error.message
+    // 如果 error 是对象，尝试提取嵌套的错误信息
+    if (typeof payload.error === 'object') {
+      const nested = payload.error.error
+      if (nested && nested.message) return nested.message
+      if (nested && nested.code) return nested.code
+    }
   }
   return ''
+}
+
+// 检查响应中是否包含 token 失效错误（包括嵌套的 JSON 字符串）
+const checkTokenInvalidatedInResponse = (parsed, rawText) => {
+  console.log('[checkTokenInvalidated] 开始检查，rawText 类型:', typeof rawText, 'parsed 类型:', typeof parsed)
+  
+  // 首先检查原始文本（整个响应字符串）- 这是最可靠的方法
+  if (rawText) {
+    const rawStr = String(rawText)
+    console.log('[checkTokenInvalidated] rawText 前500字符:', rawStr.substring(0, 500))
+    const hasTokenInvalidated = rawStr.includes('token_invalidated')
+    const hasSigningInAgain = rawStr.includes('Please try signing in again') || rawStr.includes('signing in again')
+    console.log('[checkTokenInvalidated] rawText 检查结果 - token_invalidated:', hasTokenInvalidated, 'signing in again:', hasSigningInAgain)
+    if (hasTokenInvalidated || hasSigningInAgain) {
+      console.log('[checkTokenInvalidated] ✅ 在 rawText 中发现 token_invalidated，返回 true')
+      return true
+    }
+  }
+  
+  // 检查解析后的错误信息
+  if (parsed) {
+    console.log('[checkTokenInvalidated] parsed:', parsed)
+    // 如果 parsed.error 是字符串，直接检查
+    if (parsed.error && typeof parsed.error === 'string') {
+      const errorStr = parsed.error
+      console.log('[checkTokenInvalidated] parsed.error 前500字符:', errorStr.substring(0, 500))
+      const hasTokenInvalidated = errorStr.includes('token_invalidated')
+      const hasSigningInAgain = errorStr.includes('Please try signing in again') || errorStr.includes('signing in again')
+      console.log('[checkTokenInvalidated] parsed.error 检查结果 - token_invalidated:', hasTokenInvalidated, 'signing in again:', hasSigningInAgain)
+      if (hasTokenInvalidated || hasSigningInAgain) {
+        console.log('[checkTokenInvalidated] ✅ 在 parsed.error 字符串中发现 token_invalidated，返回 true')
+        return true
+      }
+    }
+    
+    // 使用 getErrorMessage 提取错误信息
+    const errMsg = getErrorMessage(parsed)
+    if (errMsg) {
+      const errStr = String(errMsg)
+      console.log('[checkTokenInvalidated] errMsg 前500字符:', errStr.substring(0, 500))
+      const hasTokenInvalidated = errStr.includes('token_invalidated')
+      const hasSigningInAgain = errStr.includes('Please try signing in again') || errStr.includes('signing in again')
+      console.log('[checkTokenInvalidated] errMsg 检查结果 - token_invalidated:', hasTokenInvalidated, 'signing in again:', hasSigningInAgain)
+      if (hasTokenInvalidated || hasSigningInAgain) {
+        console.log('[checkTokenInvalidated] ✅ 在 errMsg 中发现 token_invalidated，返回 true')
+        return true
+      }
+    }
+  }
+  
+  console.log('[checkTokenInvalidated] ❌ 未发现 token_invalidated，返回 false')
+  return false
 }
 
 const parsePendingBody = (body) => {
@@ -51,48 +109,78 @@ const getTokenEmailById = async (tokenId) => {
 
 // 统一的 token 失效处理函数
 const handleTokenInvalidated = async (tokenId, intervalKey, pendingIntervals, updateTaskFn, taskIdOrRemoteId, addLogFn, isOrphan = false) => {
+  console.log('[handleTokenInvalidated] 开始处理，tokenId:', tokenId, 'intervalKey:', intervalKey)
   const email = await getTokenEmailById(tokenId)
+  console.log('[handleTokenInvalidated] 获取到的邮箱:', email)
   const who = email ? `${email}` : (tokenId != null ? `token_id=${tokenId}` : '未知账号')
   const message = `账号失效（${who}），停止 pending`
+  console.log('[handleTokenInvalidated] 错误信息:', message)
+  
+  if (tokenId != null && window.go?.main?.App?.SetTokenError) {
+    try {
+      console.log('[handleTokenInvalidated] 调用 SetTokenError，tokenId:', tokenId, 'message:', message)
+      await window.go.main.App.SetTokenError(tokenId, message)
+      console.log('[handleTokenInvalidated] SetTokenError 成功')
+    } catch (e) {
+      console.error('[handleTokenInvalidated] SetTokenError 失败:', e)
+      // ignore: don't block pending stop on error persistence
+    }
+  }
+  
   const logPrefix = isOrphan ? `孤儿任务 ${taskIdOrRemoteId}` : `Task ${taskIdOrRemoteId}`
+  const logMessage = `${logPrefix} pending 失败: ${message}`
+  console.log('[handleTokenInvalidated]', logMessage)
   if (addLogFn) {
-    addLogFn(`${logPrefix} pending 失败: ${message}`, 'warning')
-  } else {
-    console.log(`${logPrefix} pending 失败: ${message}`)
+    addLogFn(logMessage, 'warning')
   }
   
   const id = pendingIntervals.get(intervalKey)
+  console.log('[handleTokenInvalidated] 清除 interval，id:', id, 'intervalKey:', intervalKey)
   if (id != null) clearInterval(id)
   pendingIntervals.delete(intervalKey)
+  console.log('[handleTokenInvalidated] 已清除 interval')
   
   if (updateTaskFn && !isOrphan) {
+    console.log('[handleTokenInvalidated] 更新任务状态为 failed')
     updateTaskFn(taskIdOrRemoteId, { status: 'failed', message })
   }
   
+  console.log('[handleTokenInvalidated] 处理完成')
   return { stopped: true, message }
 }
 
 const getVideoRequestParams = (modelValue) => {
-  const orientation = modelValue.includes('portrait') ? 'portrait' : 'landscape'
-  let nFrames = '300'
-  if (modelValue.includes('25s')) nFrames = '750'
-  else if (modelValue.includes('15s')) nFrames = '450'
+  const table = {
+    'sora2-landscape-10s':        { orientation: 'landscape', nFrames: '300', soraModel: 'sy_8',  size: 'small', requirePro: false },
+    'sora2-portrait-10s':         { orientation: 'portrait',  nFrames: '300', soraModel: 'sy_8',  size: 'small', requirePro: false },
+    'sora2-landscape-15s':        { orientation: 'landscape', nFrames: '450', soraModel: 'sy_8',  size: 'small', requirePro: false },
+    'sora2-portrait-15s':         { orientation: 'portrait',  nFrames: '450', soraModel: 'sy_8',  size: 'small', requirePro: false },
+    'sora2-landscape-25s':        { orientation: 'landscape', nFrames: '750', soraModel: 'sy_8',  size: 'small', requirePro: true  },
+    'sora2-portrait-25s':         { orientation: 'portrait',  nFrames: '750', soraModel: 'sy_8',  size: 'small', requirePro: true  },
 
-  let soraModel = 'sy_8'
-  let size = 'small'
-  let requirePro = false
-  if (modelValue.startsWith('sora2pro-hd-')) {
-    soraModel = 'sy_ore'
-    size = 'large'
-    requirePro = true
-  } else if (modelValue.startsWith('sora2pro-')) {
-    soraModel = 'sy_ore'
-    size = 'small'
-    requirePro = true
-  } else if (modelValue.includes('25s')) {
-    requirePro = true
+    'sora2pro-landscape-10s':     { orientation: 'landscape', nFrames: '300', soraModel: 'sy_ore', size: 'small', requirePro: true  },
+    'sora2pro-portrait-10s':      { orientation: 'portrait',  nFrames: '300', soraModel: 'sy_ore', size: 'small', requirePro: true  },
+    'sora2pro-landscape-15s':     { orientation: 'landscape', nFrames: '450', soraModel: 'sy_ore', size: 'small', requirePro: true  },
+    'sora2pro-portrait-15s':      { orientation: 'portrait',  nFrames: '450', soraModel: 'sy_ore', size: 'small', requirePro: true  },
+    'sora2pro-landscape-25s':     { orientation: 'landscape', nFrames: '750', soraModel: 'sy_ore', size: 'small', requirePro: true  },
+    'sora2pro-portrait-25s':      { orientation: 'portrait',  nFrames: '750', soraModel: 'sy_ore', size: 'small', requirePro: true  },
+
+    'sora2pro-hd-landscape-10s':  { orientation: 'landscape', nFrames: '300', soraModel: 'sy_ore', size: 'large', requirePro: true  },
+    'sora2pro-hd-portrait-10s':   { orientation: 'portrait',  nFrames: '300', soraModel: 'sy_ore', size: 'large', requirePro: true  },
+    'sora2pro-hd-landscape-15s':  { orientation: 'landscape', nFrames: '450', soraModel: 'sy_ore', size: 'large', requirePro: true  },
+    'sora2pro-hd-portrait-15s':   { orientation: 'portrait',  nFrames: '450', soraModel: 'sy_ore', size: 'large', requirePro: true  },
+    // 25s Pro HD not listed in 说明.md; assuming same pattern with 750 frames and large size.
+    'sora2pro-hd-landscape-25s':  { orientation: 'landscape', nFrames: '750', soraModel: 'sy_ore', size: 'large', requirePro: true  },
+    'sora2pro-hd-portrait-25s':   { orientation: 'portrait',  nFrames: '750', soraModel: 'sy_ore', size: 'large', requirePro: true  },
   }
 
+  if (table[modelValue]) return table[modelValue]
+
+  const orientation = modelValue.includes('portrait') ? 'portrait' : 'landscape'
+  const nFrames = modelValue.includes('25s') ? '750' : (modelValue.includes('15s') ? '450' : '300')
+  const requirePro = modelValue.startsWith('sora2pro-') || modelValue.startsWith('sora2pro-hd-') || modelValue.includes('25s')
+  const soraModel = modelValue.startsWith('sora2pro-') || modelValue.startsWith('sora2pro-hd-') ? 'sy_ore' : 'sy_8'
+  const size = modelValue.startsWith('sora2pro-hd-') ? 'large' : 'small'
   return { orientation, nFrames, soraModel, size, requirePro }
 }
 
@@ -159,16 +247,11 @@ export const useGenerateStore = defineStore('generate', () => {
     { value: 'sora2pro-portrait-15s', label: '竖屏视频 15s (Pro)', group: 'Pro版视频' },
     { value: 'sora2pro-portrait-10s', label: '竖屏视频 10s (Pro)', group: 'Pro版视频' },
 
-    { value: 'sora2pro-hd-landscape-25s', label: '横屏视频 25s (Pro HD)', group: 'Pro HD版视频' },
+    // Pro HD 版视频：仅保留 10s / 15s，去掉 25s
     { value: 'sora2pro-hd-landscape-15s', label: '横屏视频 15s (Pro HD)', group: 'Pro HD版视频' },
     { value: 'sora2pro-hd-landscape-10s', label: '横屏视频 10s (Pro HD)', group: 'Pro HD版视频' },
-    { value: 'sora2pro-hd-portrait-25s', label: '竖屏视频 25s (Pro HD)', group: 'Pro HD版视频' },
     { value: 'sora2pro-hd-portrait-15s', label: '竖屏视频 15s (Pro HD)', group: 'Pro HD版视频' },
     { value: 'sora2pro-hd-portrait-10s', label: '竖屏视频 10s (Pro HD)', group: 'Pro HD版视频' },
-
-    { value: 'gpt-image', label: '方图 360×360', group: '图片' },
-    { value: 'gpt-image-landscape', label: '横图 540×360', group: '图片' },
-    { value: 'gpt-image-portrait', label: '竖图 360×540', group: '图片' },
   ]
 
   const modelGroups = computed(() => {
@@ -303,9 +386,9 @@ export const useGenerateStore = defineStore('generate', () => {
              pendingIntervals.delete(taskId)
              return
          }
+         let tokenId = current.tokenIdForPending
          try {
              let bearer = ''
-             let tokenId = current.tokenIdForPending
              // 若任务未记录 tokenIdForPending（如旧任务或刷新前创建的），从 video_task_results 按 remoteTaskId 查 token_id
              if (tokenId == null && current.remoteTaskId && window.go?.main?.App?.GetTokenIDByRemoteTaskID) {
                  const res = await window.go.main.App.GetTokenIDByRemoteTaskID(current.remoteTaskId)
@@ -325,9 +408,13 @@ export const useGenerateStore = defineStore('generate', () => {
                  return
              }
              const body = await window.go.main.App.PollPending(apiBase, bearer)
+            console.log('[startPendingInterval] PollPending 返回:', typeof body, body?.substring?.(0, 200) || body)
             const { rawText, parsed } = parsePendingBody(body)
-            const pendingErr = getErrorMessage(parsed)
-            if ((pendingErr && isTokenInvalidatedError(pendingErr)) || isTokenInvalidatedError(rawText)) {
+            console.log('[startPendingInterval] parsed:', parsed, 'rawText 前200字符:', rawText?.substring?.(0, 200))
+            const isInvalid = checkTokenInvalidatedInResponse(parsed, rawText)
+            console.log('[startPendingInterval] checkTokenInvalidatedInResponse 结果:', isInvalid)
+            if (isInvalid) {
+                console.log('[startPendingInterval] 检测到 token 失效，调用 handleTokenInvalidated')
                 await handleTokenInvalidated(tokenId, taskId, pendingIntervals, updateTask, taskId, addLog, false)
                 return
             }
@@ -391,7 +478,26 @@ export const useGenerateStore = defineStore('generate', () => {
         } catch (err) {
             const errStr = String(err?.message || err || '')
             if (isTokenInvalidatedError(errStr)) {
-                await handleTokenInvalidated(tokenId, taskId, pendingIntervals, updateTask, taskId, addLog, false)
+                // 如果 tokenId 仍未定义，尝试从任务或数据库获取
+                let finalTokenId = tokenId
+                if (finalTokenId == null) {
+                    const current = tasks.value.find(x => x.id === taskId)
+                    if (current) {
+                        finalTokenId = current.tokenIdForPending
+                        // 如果还是没有，尝试从数据库获取
+                        if (finalTokenId == null && current.remoteTaskId && window.go?.main?.App?.GetTokenIDByRemoteTaskID) {
+                            try {
+                                const res = await window.go.main.App.GetTokenIDByRemoteTaskID(current.remoteTaskId)
+                                const data = typeof res === 'string' ? JSON.parse(res) : res
+                                if (data?.token_id != null) {
+                                    finalTokenId = data.token_id
+                                }
+                            } catch (_) {}
+                        }
+                    }
+                }
+                console.log('[startPendingInterval catch] 检测到 token 失效，tokenId:', finalTokenId)
+                await handleTokenInvalidated(finalTokenId, taskId, pendingIntervals, updateTask, taskId, addLog, false)
                 return
             }
             addLog(`Task ${taskId} pending 轮询失败: ${err?.message || err}`, 'warning')
@@ -423,9 +529,13 @@ export const useGenerateStore = defineStore('generate', () => {
                  return
              }
              const body = await window.go.main.App.PollPending(apiBase, bearer)
+            console.log('[startOrphanPending] PollPending 返回:', typeof body, body?.substring?.(0, 200) || body)
             const { rawText, parsed } = parsePendingBody(body)
-            const pendingErr = getErrorMessage(parsed)
-            if ((pendingErr && isTokenInvalidatedError(pendingErr)) || isTokenInvalidatedError(rawText)) {
+            console.log('[startOrphanPending] parsed:', parsed, 'rawText 前200字符:', rawText?.substring?.(0, 200))
+            const isInvalid = checkTokenInvalidatedInResponse(parsed, rawText)
+            console.log('[startOrphanPending] checkTokenInvalidatedInResponse 结果:', isInvalid)
+            if (isInvalid) {
+                console.log('[startOrphanPending] 检测到 token 失效，调用 handleTokenInvalidated')
                 await handleTokenInvalidated(tokenId, key, pendingIntervals, null, remoteTaskId, addLog, true)
                 return
             }
@@ -603,7 +713,7 @@ export const useGenerateStore = defineStore('generate', () => {
      // 视频任务：从数据库随机取一个状态正常、有剩余次数的 token 作为 bearer，并记下 token_id 供收到 create 结果时写入 SQLite
      let bearerForRequest = apiKey.value
      let videoTokenId = null
-    if (typeof t.model === 'string' && t.model.startsWith('sora2-') && window.go?.main?.App?.GetRandomVideoToken) {
+    if (typeof t.model === 'string' && t.model.startsWith('sora2') && window.go?.main?.App?.GetRandomVideoToken) {
          try {
             const { requirePro } = getVideoRequestParams(t.model)
             const res = await window.go.main.App.GetRandomVideoToken(requirePro)
@@ -625,13 +735,27 @@ export const useGenerateStore = defineStore('generate', () => {
      const controller = new AbortController()
      abortControllers.set(taskId, controller)
 
-     const isVideoTask = typeof t.model === 'string' && t.model.startsWith('sora2-')
+    const isVideoTask = typeof t.model === 'string' && t.model.startsWith('sora2')
 
      try {
         if (isVideoTask && window.go?.main?.App?.CreateVideo) {
             // 视频任务：调用与 testsh/create.sh 相同的接口 POST /videos（由 Go 发起，控制台打 CREATE 请求/响应）
             const { orientation, nFrames, soraModel, size } = getVideoRequestParams(t.model)
             const apiBase = baseUrl.value.replace(/\/$/, '')
+            
+            // 打印请求信息到控制台
+            console.log('========== 创建视频请求 (POST /videos via Go) ==========')
+            console.log('API Base:', apiBase)
+            console.log('Bearer Token:', bearerForRequest ? bearerForRequest.substring(0, 20) + '...' : '(empty)')
+            console.log('Prompt:', finalPrompt)
+            console.log('Orientation:', orientation)
+            console.log('N Frames:', nFrames)
+            console.log('Model:', soraModel)
+            console.log('Size:', size)
+            console.log('Task ID:', taskId)
+            console.log('Token ID:', videoTokenId)
+            console.log('----------------------------------------')
+            
             const res = await window.go.main.App.CreateVideo(
                 apiBase,
                 bearerForRequest,
@@ -641,6 +765,10 @@ export const useGenerateStore = defineStore('generate', () => {
                 soraModel,
                 size
             )
+            
+            console.log('========== 创建视频响应 (via Go) ==========')
+            console.log('Response:', typeof res === 'string' ? res.substring(0, 500) : res)
+            console.log('=======================================')
              const data = typeof res === 'string' ? JSON.parse(res) : res
              const taskIdRemote = data?.id || data?.task_id
              if (taskIdRemote) {
@@ -713,6 +841,13 @@ export const useGenerateStore = defineStore('generate', () => {
              })
          }
      } catch (e) {
+         console.error('========== 创建视频任务异常 ==========')
+         console.error('Task ID:', taskId)
+         console.error('Error:', e)
+         console.error('Error name:', e?.name)
+         console.error('Error message:', e?.message)
+         console.error('Error stack:', e?.stack)
+         console.error('=======================================')
          const humanErr = humanizeUpstreamError(e)
          updateTask(taskId, { status: 'failed', message: humanErr.message })
          addLog(`Task ${taskId} exception: ${humanErr.message}`, humanErr.type || 'error')

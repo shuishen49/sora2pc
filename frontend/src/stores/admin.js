@@ -92,6 +92,7 @@ export const useAdminStore = defineStore('admin', () => {
       imageCount: t.image_count,
       videoCount: t.video_count,
       errorCount: t.error_count,
+      errorMessage: t.error_message,
       remark: t.remark,
       proxyUrl: t.proxy_url,
       imageEnabled: t.image_enabled,

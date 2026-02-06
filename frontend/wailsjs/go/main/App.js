@@ -130,6 +130,10 @@ export function SetTaskList(arg1) {
   return window['go']['main']['App']['SetTaskList'](arg1);
 }
 
+export function SetTokenError(arg1, arg2) {
+  return window['go']['main']['App']['SetTokenError'](arg1, arg2);
+}
+
 export function TestServerHealth(arg1) {
   return window['go']['main']['App']['TestServerHealth'](arg1);
 }

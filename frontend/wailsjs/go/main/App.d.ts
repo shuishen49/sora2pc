@@ -66,6 +66,8 @@ export function SetBaseURL(arg1:string):Promise<void>;
 
 export function SetTaskList(arg1:string):Promise<string>;
 
+export function SetTokenError(arg1:number,arg2:string):Promise<string>;
+
 export function TestServerHealth(arg1:string):Promise<main.HealthResult>;
 
 export function UpdateVideoTaskProgress(arg1:string,arg2:number):Promise<string>;

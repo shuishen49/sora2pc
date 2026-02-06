@@ -80,8 +80,21 @@ if (savedDraft) {
     form.prompt = savedDraft
 }
 
+// 记住上一次使用的模型，避免每次都重新选择
+const MODEL_KEY = 'gen_last_model_v1'
+const savedModel = localStorage.getItem(MODEL_KEY)
+if (savedModel) {
+    form.model = savedModel
+}
+
 watch(() => form.prompt, (newVal) => {
     localStorage.setItem(DRAFT_KEY, newVal || '')
+})
+
+watch(() => form.model, (newVal) => {
+    if (newVal) {
+        localStorage.setItem(MODEL_KEY, newVal)
+    }
 })
 
 // Computed for template
@@ -93,7 +106,6 @@ const baseUrl = computed({
   get: () => store.baseUrl,
   set: (val) => store.setBaseUrl(val)
 })
-const modelGroups = computed(() => store.modelGroups)
 const batchMode = computed({
   get: () => store.batchMode,
   set: (val) => { store.batchMode = val }
@@ -132,19 +144,110 @@ const updateAdvSettings = (val) => {
     Object.assign(form, val)
 }
 
-// Custom Model Dropdown Logic
-const modelDropdownOpen = ref(false)
-const currentModelLabel = computed(() => {
-    for (const group in store.modelGroups) {
-        const found = store.modelGroups[group].find(m => m.value === form.model)
-        if (found) return found.label
-    }
-    return form.model // Fallback
+// ======= 模型选择拆分：版本 / 时长 / 横竖屏 =======
+// 第一列：版本（标准 / Pro / Pro HD）
+const versionOptions = [
+  { value: 'standard', label: '标准版视频' },
+  { value: 'pro', label: 'Pro版视频' },
+  { value: 'pro-hd', label: 'Pro HD版视频' }
+]
+
+// 第二列：时长（HD 只有 10s / 15s，其他都有 25s）
+const durationOptionsAll = [
+  { value: '25s', label: '25s' },
+  { value: '15s', label: '15s' },
+  { value: '10s', label: '10s' }
+]
+
+const availableDurationOptions = computed(() => {
+  // Pro HD 版不支持 25s，不展示
+  if (selectedVersion.value === 'pro-hd') {
+    return durationOptionsAll.filter(opt => opt.value !== '25s')
+  }
+  return durationOptionsAll
 })
-const selectModel = (value) => {
-    form.model = value
-    modelDropdownOpen.value = false
+
+// 第三列：横竖屏
+const orientationOptions = [
+  { value: 'landscape', label: '横屏' },
+  { value: 'portrait', label: '竖屏' }
+]
+
+const selectedVersion = ref('standard')
+const selectedDuration = ref('10s')
+const selectedOrientation = ref('landscape')
+
+// 从 model 字符串解析出三要素
+const parseModel = (value) => {
+  if (!value || typeof value !== 'string') return null
+
+  let version = 'standard'
+  if (value.startsWith('sora2pro-hd')) {
+    version = 'pro-hd'
+  } else if (value.startsWith('sora2pro')) {
+    version = 'pro'
+  }
+
+  let orientation = value.includes('-portrait-') ? 'portrait' : 'landscape'
+
+  let duration = '10s'
+  if (value.endsWith('25s')) duration = '25s'
+  else if (value.endsWith('15s')) duration = '15s'
+  else if (value.endsWith('10s')) duration = '10s'
+
+  return { version, orientation, duration }
 }
+
+// 根据三要素组装 model 字符串
+const buildModelFromParts = () => {
+  let prefix = 'sora2'
+  if (selectedVersion.value === 'pro') prefix = 'sora2pro'
+  else if (selectedVersion.value === 'pro-hd') prefix = 'sora2pro-hd'
+
+  return `${prefix}-${selectedOrientation.value}-${selectedDuration.value}`
+}
+
+// 将 form.model 拆分同步到三列
+const syncPartsFromModel = (val) => {
+  const parsed = parseModel(val)
+  if (!parsed) return
+
+  selectedVersion.value = parsed.version
+  selectedOrientation.value = parsed.orientation
+
+  // HD 版如果从外部传来 25s，强制回退为 15s
+  if (parsed.version === 'pro-hd' && parsed.duration === '25s') {
+    selectedDuration.value = '15s'
+  } else {
+    selectedDuration.value = parsed.duration
+  }
+}
+
+// 将三列组合回 form.model
+const syncModelFromParts = () => {
+  form.model = buildModelFromParts()
+}
+
+// 初始化 & 双向同步
+watch(
+  () => form.model,
+  (val) => {
+    syncPartsFromModel(val)
+  },
+  { immediate: true }
+)
+
+watch(selectedVersion, (val) => {
+  // 切到 Pro HD 时，如果当前是 25s，自动改为 15s
+  if (val === 'pro-hd' && selectedDuration.value === '25s') {
+    selectedDuration.value = '15s'
+  }
+  syncModelFromParts()
+})
+
+watch([selectedDuration, selectedOrientation], () => {
+  syncModelFromParts()
+})
 
 
 
@@ -448,28 +551,43 @@ const retryTask = (task) => {
 
             <div class="panel-header">
                 <h2>创建生成任务</h2>
-                <div class="model-select-wrapper">
-                    <div class="custom-select" :class="{ open: modelDropdownOpen }">
-                         <div class="select-trigger" @click="modelDropdownOpen = !modelDropdownOpen">
-                             {{ currentModelLabel }}
-                             <span class="arrow">▼</span>
-                         </div>
-                         <transition name="fade">
-                             <div class="select-dropdown" v-show="modelDropdownOpen">
-                                 <div v-for="(models, groupName) in modelGroups" :key="groupName" class="select-group">
-                                     <div class="group-label">{{ groupName }}</div>
-                                     <div
-                                        v-for="m in models"
-                                        :key="m.value"
-                                        class="select-option"
-                                        :class="{ active: m.value === form.model }"
-                                        @click="selectModel(m.value)"
-                                     >
-                                         {{ m.label }}
-                                     </div>
-                                 </div>
-                             </div>
-                         </transition>
+                <!-- 一排三列：版本 / 时长 / 横竖屏 -->
+                <div class="model-select-row">
+                    <div class="model-select-column">
+                        <label class="model-group-title">版本</label>
+                        <select v-model="selectedVersion" class="config-input">
+                            <option
+                              v-for="opt in versionOptions"
+                              :key="opt.value"
+                              :value="opt.value"
+                            >
+                                {{ opt.label }}
+                            </option>
+                        </select>
+                    </div>
+                    <div class="model-select-column">
+                        <label class="model-group-title">时长</label>
+                        <select v-model="selectedDuration" class="config-input">
+                            <option
+                              v-for="opt in availableDurationOptions"
+                              :key="opt.value"
+                              :value="opt.value"
+                            >
+                                {{ opt.label }}
+                            </option>
+                        </select>
+                    </div>
+                    <div class="model-select-column">
+                        <label class="model-group-title">画幅</label>
+                        <select v-model="selectedOrientation" class="config-input">
+                            <option
+                              v-for="opt in orientationOptions"
+                              :key="opt.value"
+                              :value="opt.value"
+                            >
+                                {{ opt.label }}
+                            </option>
+                        </select>
                     </div>
                 </div>
             </div>
@@ -707,8 +825,27 @@ const retryTask = (task) => {
 
 .panel-header h2 { margin: 0; font-size: 18px; color: #f1f5f9; }
 
-/* Model Select */
-/* Model Select Wrapper */
+/* Model Select - 新的三列布局 */
+.model-select-row {
+    display: flex;
+    gap: 12px;
+    margin-left: 16px;
+    flex: 1;
+}
+
+.model-select-column {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.model-group-title {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+/* 旧的下拉样式仍用于其它地方，这里保留 */
 .model-select-wrapper {
     position: relative;
     width: 200px;
